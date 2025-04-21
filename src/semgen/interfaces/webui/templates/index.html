@@ -1,0 +1,170 @@
+{% extends 'base.html' %}
+
+{% block title %}Configuration{% endblock %}
+
+{% block content %}
+<h2>Configuration</h2>
+<p><i>Web UI Controls Placeholder - Implement forms based on spec section 11.3</i></p>
+
+<form id="config-form">
+    <!-- Example: Global Settings -->
+    <fieldset>
+        <legend>Global Settings</legend>
+        <label for="num_samples">Number of Samples:</label>
+        <input type="number" id="num_samples" name="num_samples" value="{{ default_config.num_samples }}" min="1"><br>
+
+        <label for="output_dir">Output Directory (Server-side):</label>
+        <input type="text" id="output_dir" name="output_dir" value="{{ default_config.output_dir }}" readonly><br>
+        <!-- Output dir usually fixed on server for web UI -->
+
+        <label for="seed">Seed (0 for random):</label>
+        <input type="number" id="seed" name="seed" value="{{ default_config.seed | default(0, true) }}"><br>
+         <!-- Add more fields for width, height, pixel_size etc. -->
+    </fieldset>
+
+    <!-- Add fieldsets for Layering, Artifacts, Noise, Overlays etc. -->
+    <!-- Use JavaScript to dynamically add/remove layers -->
+    <!-- Use sliders, checkboxes, dropdowns as per spec -->
+
+    <hr>
+    <button type="button" id="start-button">Start Generation</button>
+    <button type="button" id="cancel-button" disabled>Cancel Generation</button>
+</form>
+
+<hr>
+<h2>Status</h2>
+<div id="status-message">Idle</div>
+<progress id="progress-bar" value="0" max="100" style="width: 100%;"></progress>
+<div id="download-link-area" style="margin-top: 10px;"></div>
+
+{% endblock %}
+
+{% block scripts %}
+<!-- Add JavaScript here to handle form submission (fetch POST to /start_generation),
+     status polling (fetch GET /get_status), updating progress bar/message,
+     handling cancellation, and enabling download link -->
+<script>
+    // Basic JS structure (needs implementation)
+    const startButton = document.getElementById('start-button');
+    const cancelButton = document.getElementById('cancel-button');
+    const statusMessage = document.getElementById('status-message');
+    const progressBar = document.getElementById('progress-bar');
+    const downloadArea = document.getElementById('download-link-area');
+    const configForm = document.getElementById('config-form');
+    let pollingInterval = null;
+
+    function collectConfig() {
+        // TODO: Collect all form values into a nested JSON object matching the config structure
+        // This is complex and requires carefully mapping form element IDs/names to config keys
+        // Example (very simplified):
+        return {
+            num_samples: parseInt(document.getElementById('num_samples').value) || 1,
+            seed: parseInt(document.getElementById('seed').value) || 0,
+            // ... recursively collect layer, artifact, noise settings ...
+        };
+    }
+
+    async function startGeneration() {
+        startButton.disabled = true;
+        cancelButton.disabled = false;
+        statusMessage.textContent = 'Starting...';
+        progressBar.value = 0;
+        downloadArea.innerHTML = '';
+
+        const configData = collectConfig();
+
+        try {
+            const response = await fetch('/start_generation', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(configData)
+            });
+            const result = await response.json();
+            if (response.ok) {
+                statusMessage.textContent = 'Generation started...';
+                startPolling();
+            } else {
+                statusMessage.textContent = `Error: ${result.message}`;
+                startButton.disabled = false;
+                cancelButton.disabled = true;
+            }
+        } catch (error) {
+            statusMessage.textContent = `Network Error: ${error}`;
+            startButton.disabled = false;
+            cancelButton.disabled = true;
+        }
+    }
+
+    async function cancelGeneration() {
+         cancelButton.disabled = true; // Disable while cancelling
+         try {
+            const response = await fetch('/cancel_generation', { method: 'POST'});
+            const result = await response.json();
+            statusMessage.textContent = result.message || 'Cancel requested.';
+            // Polling will eventually update status to non-running
+         } catch (error) {
+             statusMessage.textContent = `Cancel Error: ${error}`;
+             cancelButton.disabled = false; // Re-enable if cancel fails?
+         }
+    }
+
+
+    function updateStatus(status) {
+        statusMessage.textContent = status.message || 'Status Unknown';
+        if (status.total > 0) {
+            progressBar.max = status.total;
+            progressBar.value = status.progress;
+        } else {
+             progressBar.value = 0;
+             progressBar.max = 100; // Default max if total not known
+        }
+
+        if (!status.running) {
+            stopPolling();
+            startButton.disabled = false;
+            cancelButton.disabled = true;
+            if (status.last_output_zip) {
+                downloadArea.innerHTML = `<a href="/download_output?f=${encodeURIComponent(status.last_output_zip)}" download="${status.last_output_zip}">Download Output ZIP</a>`;
+            } else if (status.message.toLowerCase().includes("complete") || status.message.toLowerCase().includes("finished")) {
+                 // Handle cases where generation finished but no zip (e.g., error during zip)
+            }
+        } else {
+            startButton.disabled = true;
+            cancelButton.disabled = false;
+        }
+    }
+
+    async function pollStatus() {
+        try {
+            const response = await fetch('/get_status');
+            if (!response.ok) { throw new Error(`HTTP error! status: ${response.status}`); }
+            const status = await response.json();
+            updateStatus(status);
+        } catch (error) {
+            console.error("Polling error:", error);
+            statusMessage.textContent = 'Polling error. Check console.';
+            // Decide whether to stop polling on error
+            // stopPolling();
+        }
+    }
+
+    function startPolling() {
+        stopPolling(); // Clear any existing interval
+        pollStatus(); // Poll immediately
+        pollingInterval = setInterval(pollStatus, 2000); // Poll every 2 seconds
+    }
+
+    function stopPolling() {
+        if (pollingInterval) {
+            clearInterval(pollingInterval);
+            pollingInterval = null;
+        }
+    }
+
+    startButton.addEventListener('click', startGeneration);
+    cancelButton.addEventListener('click', cancelGeneration);
+
+    // Initial status check on load?
+    // pollStatus();
+</script>
+{% endblock %}

@@ -1,0 +1,192 @@
+{
+  "image_width": 512,
+  "image_height": 512,
+  "bit_depth": 16,
+  "num_samples": 10,
+  "start_index": 0,
+  "pixel_size_nm": [2.0, 25.0], 
+  "output_dir": "./output_even_richer_random",
+  "seed": 0,
+
+  "background": {
+    "background_type": ["flat", "gradient", "noise", "composite"],
+    "flat_intensity": [0.0, 0.3], 
+    "gradient_style": ["linear", "radial"],
+    "gradient_params": {
+      "start_intensity": [0.0, 0.2],
+      "end_intensity": [0.05, 0.4],
+      "direction": [0, 360],
+      "center_x%": [0.1, 0.9],
+      "center_y%": [0.1, 0.9]
+    },
+    "noise_type": ["perlin", "simplex", "gaussian"],
+    "noise_amplitude": [0.01, 0.15], 
+    "noise_frequency": [0.5, 15.0], 
+    "noise_base_intensity": [0.0, 0.2] 
+  },
+
+  "layering": {
+    "num_layers": [2, 4], 
+    "layer_order": ["sequential", "random"],
+    "layers": [ 
+
+      
+      {
+        "enabled": true, "layer_name": "Dense Circle Grid High",
+        "shape_type": "circle",
+        "pattern": { "type": "grid", "rows": [15, 40], "cols": [15, 40], "spacing": [10, 35], "jitter_stddev": [0.0, 2.5] }, 
+        "shape_params": { "radius": [3, 18], "border_width": [-1, 2], "intensity": [0.5, 1.0] }, 
+        "alpha": [0.6, 1.0], "composition_mode": ["additive", "overwrite"]
+      },
+      {
+        "enabled": true, "layer_name": "Dense Rectangle Grid High",
+        "shape_type": "rectangle",
+        "pattern": { "type": "grid", "rows": [12, 35], "cols": [12, 35], "spacing": [15, 45], "jitter_stddev": [0.0, 2.0]},
+        "shape_params": { "width": [5, 25], "height": [5, 25], "border_width": [-1, 1], "intensity": [0.6, 1.0], "rotation": [-10, 10] },
+        "alpha": [0.7, 1.0], "composition_mode": ["additive", "overwrite"]
+      },
+      {
+        "enabled": true, "layer_name": "Dense Rounded Rect Grid High",
+        "shape_type": "rounded_rectangle",
+        "pattern": { "type": "grid", "rows": [8, 20], "cols": [8, 20], "spacing": [25, 60], "jitter_stddev": [0.0, 2.5]},
+        "shape_params": { "width": [15, 40], "height": [15, 40], "corner_radius": [1, 8], "border_width": -1, "intensity": [0.6, 1.0], "rotation": [-10, 10] },
+        "alpha": [0.8, 1.0], "composition_mode": "overwrite"
+      },
+      {
+        "enabled": true, "layer_name": "Dense Custom Poly Grid (e.g., L)", 
+        "shape_type": "l", 
+        "pattern": { "type": "grid", "rows": [5, 15], "cols": [5, 15], "spacing": [30, 90], "jitter_stddev": [0.0, 3.0]},
+        "shape_params": { "width": [20, 50], "height": [20, 50], "bar_thickness": [2, 6], "intensity": [0.5, 0.9], "rotation": [-15, 15] },
+        "alpha": [0.7, 1.0], "composition_mode": ["additive", "overwrite"]
+      },
+
+
+      
+      {
+        "enabled": true, "layer_name": "Dense Vertical Lines",
+        "shape_type": "line",
+        "pattern": { "type": "full_span_vertical", "count": [15, 60], "spacing_jitter%": [0.0, 0.2] }, 
+        "shape_params": { "thickness": [1, 6], "intensity": [0.4, 0.95] }, 
+        "alpha": [0.5, 1.0], "composition_mode": ["additive", "overwrite"] 
+      },
+      {
+        "enabled": true, "layer_name": "Dense Horizontal Lines",
+        "shape_type": "line",
+        "pattern": { "type": "full_span_horizontal", "count": [15, 60], "spacing_jitter%": [0.0, 0.2] }, 
+         "shape_params": { "thickness": [1, 6], "intensity": [0.4, 0.95] },
+        "alpha": [0.5, 1.0], "composition_mode": ["additive", "overwrite"]
+      },
+
+      
+      {
+        "enabled": true, "layer_name": "Very Scattered H",
+        "shape_type": "h",
+        "pattern": { "type": "random_scatter" }, "num_shapes": [20, 70], 
+        "shape_params": { "width": [10, 45], "height": [15, 55], "bar_thickness": [1, 7], "intensity": [0.3, 1.0], "rotation": [-25, 25] }, 
+        "alpha": [0.7, 1.0], "composition_mode": ["additive", "overwrite"]
+      },
+       {
+        "enabled": true, "layer_name": "Very Scattered Circles (Varied Size)",
+        "shape_type": "circle",
+        "pattern": { "type": "random_scatter" }, "num_shapes": [30, 100], 
+        "shape_params": { "radius": [2, 30], "border_width": [-1, 3], "intensity": [0.4, 1.0] }, 
+        "alpha": [0.6, 1.0], "composition_mode": ["additive", "overwrite"]
+      },
+       {
+        "enabled": true, "layer_name": "Very Scattered Worms",
+        "shape_type": "worm",
+        "pattern": { "type": "random_scatter" }, "num_shapes": [10, 25], 
+        "shape_params": {
+           "start_point_x%": [0.05, 0.95], "start_point_y%": [0.05, 0.95],
+           "num_steps": [15, 60], 
+           "step_size": [2, 20],
+           "thickness": [1, 8], 
+           "intensity": [0.4, 1.0],
+           "smoothness": [0.5, 15.0]
+        },
+        "alpha": [0.7, 1.0], "composition_mode": "additive"
+      },
+      { 
+        "enabled": true, "layer_name": "Scattered E and T Mix",
+        "shape_type": ["e", "t"], 
+        "pattern": { "type": "random_scatter" }, "num_shapes": [15, 50],
+        "shape_params": { "width": [15, 45], "height": [15, 45], "bar_thickness": [2, 5], "intensity": [0.5, 0.9], "rotation": [0, 360] },
+        "alpha": [0.8, 1.0], "composition_mode": ["additive", "overwrite"]
+      },
+
+
+      
+      {
+        "enabled": true, "layer_name": "Base Large Rect Grid", 
+        "shape_type": "rectangle",
+        "pattern": { "type": "grid", "rows": [3, 7], "cols": [3, 7], "spacing": [60, 150]},
+        "shape_params": { "width": [40, 100], "height": [40, 100], "border_width": 2, "intensity": [0.3, 0.6], "rotation": 0 }, 
+        "alpha": 1.0, "composition_mode": "overwrite"
+      },
+      {
+        "enabled": true, "layer_name": "Overlay Small Circles", 
+        "shape_type": "circle",
+        "pattern": { "type": "grid", "rows": [5, 15], "cols": [5, 15], "spacing": [25, 70], "jitter_stddev": [0.0, 5.0] }, 
+        "shape_params": { "radius": [5, 15], "border_width": -1, "intensity": [0.8, 1.0] }, 
+        "alpha": [0.7, 1.0], "composition_mode": "additive" 
+      }
+    ]
+  },
+
+  "artifact_raffle": { 
+    "artifact_application_order": ["logical", "random"],
+    "shape_level": {
+      "max_effects_per_image": 4, 
+      "effects": {
+        "edge_ripple": { "enabled": true, "probability": 0.8, "parameter_ranges": {"amplitude": [0.5, 4.0], "frequency": [0.1, 2.0]}}, 
+        "breaks_holes": { "enabled": true, "probability": 0.65, "parameter_ranges": {"hole_count": [1, 12], "min_size": 1, "max_size": 15}} 
+        
+      }
+    },
+    "image_level": {
+      "max_effects_per_image": 5, 
+      "effects": {
+         "affine": { "enabled": true, "probability": 0.7, "parameter_ranges": {"angle": [-12, 12], "scale": [0.88, 1.12], "shear_x": [-0.2, 0.2], "translate_x": [-20, 20], "translate_y": [-20, 20]}}, 
+         "elastic_mesh_deform": { "enabled": true, "probability": 0.6, "parameter_ranges": {"grid_spacing": [20, 120], "amplitude": [1.0, 15.0]}}, 
+         "gradient_illumination": {"enabled": true, "probability": 0.4, "parameter_ranges": {"strength": [0.1, 0.5], "style": ["linear", "radial"]}} 
+      }
+    },
+    "instrument_effects": {
+       "max_effects_per_image": 4,
+       "effects": {
+           "probe_psf": { "enabled": true, "probability": 0.9, "parameter_ranges": {"sigma_x": [0.4, 2.8], "sigma_y": [0.4, 2.8], "astig_angle": [-60, 60]}}, 
+           "charging": { "enabled": true, "probability": 0.55, "parameter_ranges": {"halo_intensity": [0.03, 0.3], "halo_radius": [5, 60], "streak_probability": 0.7, "streak_length": [30, 250], "streak_direction": [0, 360]}}, 
+           "defocus_blur": {"enabled": true, "probability": 0.5, "parameter_ranges": {"focal_plane": [0.0, 1.0], "max_radius": [0.5, 7.0], "gradient_axis": ["vertical", "horizontal", "radial"] }}, 
+           "topographic_shading": {"enabled": true, "probability": 0.3, "parameter_ranges": {"height_contrast": [0.1, 0.5], "slope_angle": [0, 360], "height_map_source": ["random_perlin", "derived"]}} 
+       }
+    },
+    "noise": {
+      "max_effects_per_image": 4, 
+      "effects": {
+        "gaussian": { "enabled": true, "probability": 0.95, "parameter_ranges": {"sigma": [0.01, 0.12]}}, 
+        "sem_texture": { "enabled": true, "probability": 0.75, "parameter_ranges": {"contrast": [0.03, 0.25], "frequency": [2.0, 25.0], "mode":["additive", "multiplicative"]}}, 
+        "salt_pepper": { "enabled": true, "probability": 0.2, "parameter_ranges": {"probability": [0.0001, 0.02]}}, 
+        "poisson": { "enabled": true, "probability": 0.5, "parameter_ranges": {"scaling": [0.03, 0.3]}}, 
+        "blur": { "enabled": true, "probability": 0.3, "parameter_ranges": {"kernel_size": [3, 7], "sigma": [0.5, 2.0]}}, 
+        "quantization": { "enabled": true, "probability": 0.2, "parameter_ranges": {"n_bits": [6, 12]}} 
+      }
+    }
+  },
+
+  "output_options": { 
+    "save_intermediate_images": false,
+    "save_noise_mask": false,
+    "save_debug_overlays": true,
+    "save_displacement_fields": false,
+    "generate_instance_masks": true,
+    "output_formats": {"image_final": "png", "masks": "png"},
+    "use_batch_archive": false,
+    "delete_on_download": false
+  },
+  "metadata_overlay": { 
+    "enabled": true,
+    "scale_bar": {"length": [0.5, 5.0], "units": ["µm", "nm"], "thickness_px": [2, 5]},
+    "text_info": {"lines": [["10 kV", "x20k"], ["15 kV", "WD 8mm", "x15k"], ["5 kV", "x50k SE"], ["Test Sample"], ["Area 3B"]], "font_size_pt": [8, 12]},
+    "styling": {"font_color": ["white", "gray"], "bar_color": ["white", "gray"], "anchor": ["bottom_right", "bottom_left", "top_right", "top_left"], "offset_px": [[5, 25], [5, 25]]}
+  }
+}
