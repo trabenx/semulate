@@ -92,11 +92,22 @@ def randomize_config_for_sample(base_config: Dict[str, Any], rng: random.Random)
             elif chosen_bg_type == 'gradient':
                 bg_config['gradient_style'] = randomize_value(bg_config.get('gradient_style'), parent_key='background.gradient_style')
                 if isinstance(bg_config.get('gradient_params'), dict):
-                    bg_config['gradient_params'] = randomize_value(bg_config['gradient_params'], parent_key='background.gradient_params') # Randomize sub-dict
+                    bg_config['gradient_params'] = randomize_value(bg_config['gradient_params'], parent_key='background.gradient_params')
             elif chosen_bg_type == 'noise':
                 bg_config['noise_type'] = randomize_value(bg_config.get('noise_type'), parent_key='background.noise_type')
                 bg_config['noise_amplitude'] = randomize_value(bg_config.get('noise_amplitude'), parent_key='background.noise_amplitude')
                 bg_config['noise_frequency'] = randomize_value(bg_config.get('noise_frequency'), parent_key='background.noise_frequency')
+                # --- ADD RANDOMIZATION FOR NOISE BASE ---
+                bg_config['noise_base_intensity'] = randomize_value(bg_config.get('noise_base_intensity'), parent_key='background.noise_base_intensity')
+                # --- ADD RANDOMIZATION FOR OTHER NOISE PARAMS ---
+                bg_config['noise_octaves'] = randomize_value(bg_config.get('noise_octaves'), parent_key='background.noise_octaves')
+                bg_config['noise_persistence'] = randomize_value(bg_config.get('noise_persistence'), parent_key='background.noise_persistence')
+                bg_config['noise_lacunarity'] = randomize_value(bg_config.get('noise_lacunarity'), parent_key='background.noise_lacunarity')
+
+            elif chosen_bg_type == 'composite':
+                bg_config['flat_intensity'] = randomize_value(bg_config.get('flat_intensity'), parent_key='background.flat_intensity')
+                # TODO: Add randomization for composite parameters if defined
+                pass
 
         # --- Randomize Layering ---
         layering_config = sample_config.get('layering', {})

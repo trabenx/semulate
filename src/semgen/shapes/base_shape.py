@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 from abc import ABC, abstractmethod
-from typing import Tuple, Dict, Any
+from typing import Tuple, Dict, Any, Optional
 
 class BaseShape(ABC):
     """
@@ -26,6 +26,9 @@ class BaseShape(ABC):
         # Assume anti-aliasing unless specified otherwise in global/layer config
         self.anti_aliasing: bool = config.get('anti_aliasing', True)
 
+    def get_param(self, key: str, default: Optional[Any] = None) -> Any:
+         """Helper method to get a parameter from the shape's config dict."""
+         return self.config.get(key, default)
 
     @abstractmethod
     def draw(self, image_data: np.ndarray) -> np.ndarray:

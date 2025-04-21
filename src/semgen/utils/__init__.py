@@ -1,7 +1,8 @@
 from .io_utils import save_image, save_metadata, save_text, ensure_dir_exists, scale_to_uint
 from .mask_utils import generate_cumulative_mask, combine_masks
 #from .image_utils import scale_to_uint
-# from .noise_utils import generate_perlin_noise_2d # Import when implemented
+from .noise_utils import generate_procedural_noise_2d # Import the new function
+
 
 __all__ = [
     "save_image",
@@ -11,5 +12,5 @@ __all__ = [
     "generate_cumulative_mask",
     "combine_masks",
     "scale_to_uint",
-    # "generate_perlin_noise_2d",
+    "generate_procedural_noise_2d",
 ]
