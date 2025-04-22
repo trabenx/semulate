@@ -229,15 +229,31 @@
     }
   },
 
-  "output_options": { 
+  "output_options": {
     "save_intermediate_images": false,
-    "save_noise_mask": false,
     "save_debug_overlays": true,
     "save_displacement_fields": false,
     "generate_instance_masks": true,
-    "output_formats": {"image_final": "png", "masks": "png"},
     "use_batch_archive": false,
-    "delete_on_download": false
+    "delete_on_download": false,
+    "save_per_layer_renders": false,
+    "save_optional_npy": true,
+    "save_noise_map": true,
+    "save_warp_field": true,
+    "save_gifs": true,
+    "save_hashes": true,
+    "save_logs": true,
+    "output_formats": {
+        "image_final": "tif",
+        "image_vis": "png",
+        "masks_data": "npy",
+        "masks_vis": "png",
+        "instance_mask_data": "tif",
+        "instance_mask_vis": "png",
+        "noise_map_vis": "png",
+        "warp_field_vis": "png",
+        "gif": "gif"
+    }
   },
   "metadata_overlay": { 
     "enabled": true,

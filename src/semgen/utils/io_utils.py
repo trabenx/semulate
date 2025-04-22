@@ -1,9 +1,55 @@
 import os
 import json
 import numpy as np
+import imageio
 import cv2 # Using OpenCV for image saving initially
 # Consider adding 'import tifffile' for better TIF handling if needed later
-from typing import Dict, Any, Union
+from typing import Dict, Any, Union, List
+
+def save_gif(frames: List[np.ndarray], filepath: str, fps: int = 5, loop: int = 0):
+    """
+    Saves a list of numpy arrays (frames) as an animated GIF.
+
+    Args:
+        frames (List[np.ndarray]): List of frames (uint8). Assumes grayscale or BGR.
+        filepath (str): Path to save the GIF file.
+        fps (int): Frames per second for the GIF.
+        loop (int): Number of times the GIF should loop (0 = infinite).
+    """
+    if not frames:
+        print("Warning: No frames provided for GIF generation.")
+        return
+    ensure_dir_exists(os.path.dirname(filepath))
+    try:
+        # Ensure frames are uint8
+        uint8_frames = []
+        for frame in frames:
+            if frame is None: continue
+            if frame.dtype != np.uint8:
+                 # Attempt conversion, assuming float [0,1] or scaling needed
+                 if np.issubdtype(frame.dtype, np.floating):
+                     frame = scale_to_uint(frame, np.uint8)
+                 elif np.issubdtype(frame.dtype, np.integer):
+                     # Try direct cast, might be wrong range
+                     frame = frame.astype(np.uint8)
+                 else:
+                     print(f"Warning: Skipping frame with unsupported dtype {frame.dtype} for GIF.")
+                     continue
+            uint8_frames.append(frame)
+
+        if not uint8_frames:
+             print("Warning: No valid uint8 frames found for GIF generation.")
+             return
+
+        print(f"DEBUG IO: Saving GIF with {len(uint8_frames)} frames to {filepath}")
+        # Use imageio v3 API if available, otherwise fallback
+        try:
+             imageio.mimsave(filepath, uint8_frames, duration=(1000 // fps), loop=loop) # duration in ms
+        except AttributeError: # Fallback for older imageio v2?
+             imageio.mimsave(filepath, uint8_frames, fps=fps, loop=loop)
+
+    except Exception as e:
+        print(f"Error saving GIF {filepath}: {e}")
 
 def ensure_dir_exists(path: str):
      """Creates a directory if it doesn't exist."""

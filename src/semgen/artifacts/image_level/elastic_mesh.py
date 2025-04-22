@@ -1,14 +1,14 @@
 import numpy as np
 import cv2
 from scipy.interpolate import griddata
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Optional
 
 from ..base_artifact import BaseArtifact
 
 class ElasticMeshDeform(BaseArtifact):
     """Applies smooth 'wobbly' elastic deformation using cv2.remap."""
 
-    def apply(self, image_data: np.ndarray, **kwargs) -> Tuple[np.ndarray, List[np.ndarray]]:
+    def apply(self, image_data: np.ndarray, **kwargs) -> Tuple[np.ndarray, List[np.ndarray], Optional[np.ndarray]]:
         """
         Applies elastic warp to image and associated masks using remap.
 
@@ -66,6 +66,9 @@ class ElasticMeshDeform(BaseArtifact):
 
         map_dx = map_dx.reshape((rows, cols)).astype(np.float32)
         map_dy = map_dy.reshape((rows, cols)).astype(np.float32)
+        
+        # --- Store the displacement field ---
+        warp_field_dx_dy = np.stack([map_dx, map_dy], axis=-1) # Shape (H, W, 2)
 
         # Create the remap coordinates: map_x(y,x) = x + dx(y,x), map_y(y,x) = y + dy(y,x)
         map_x = all_x.astype(np.float32) + map_dx
@@ -91,4 +94,4 @@ class ElasticMeshDeform(BaseArtifact):
             else:
                 warped_masks.append(None)
 
-        return warped_image, warped_masks
+        return warped_image, warped_masks, warp_field_dx_dy

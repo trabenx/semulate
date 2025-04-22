@@ -3,6 +3,8 @@ import cv2
 import os
 import time
 import random
+import logging
+import hashlib
 from typing import Dict, Any, Optional, List, Tuple
 
 from .core import GeneratedSample
@@ -11,7 +13,7 @@ from .raffle import Raffler
 from .shapes import create_shape
 from .artifacts import (create_artifact, AffineTransform, ElasticMeshDeform, TopographicShading)
 from .noise import create_noise
-from .utils import (generate_procedural_noise_2d, 
+from .utils import (generate_procedural_noise_2d, save_gif, visualize_warp_field,
                    save_image, save_metadata, save_text, ensure_dir_exists,
                    generate_cumulative_mask, combine_masks, scale_to_uint)
 from .artifacts.shape_level import EdgeRipple, BreaksHoles
@@ -344,10 +346,46 @@ def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: 
     """
     # print(f"DEBUG: generate_sample received base_output_dir: '{base_output_dir}'") # Add this line
     start_time = time.time()
+    output_opts = config.get('output_options', {}) # Define early
+    save_logs_flag = output_opts.get('save_logs', False)
+    
+    # --- Setup Logger for this sample ---
+    logger = logging.getLogger(f"sample_{sample_index}")
+    logger.propagate = False # Prevent duplicate messages if root logger exists
+    logger.setLevel(logging.DEBUG) # Log everything DEBUG and above
+    # Remove existing handlers for this logger if re-running
+    for handler in logger.handlers[:]:
+        handler.close()
+        logger.removeHandler(handler)
 
+    log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    
+    # Console handler (optional, good for seeing progress)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.INFO)
+    stream_handler.setFormatter(log_formatter)
+    logger.addHandler(stream_handler) # Uncomment to see logs on console too
+    
+    # File handler (if enabled)
+    file_handler = None
+    log_file_path = None
+    if save_logs_flag:
+        sample_id_numeric = config.get('start_index', 0) + sample_index
+        sample_id_str = f"sem_{sample_id_numeric:05d}"
+        subdir_output_path_for_log = os.path.join(base_output_dir, sample_id_str) # Need path early
+        logs_dir = os.path.join(subdir_output_path_for_log, "logs")
+        ensure_dir_exists(logs_dir)
+        log_file_path = os.path.join(logs_dir, "generation.log")
+
+        file_handler = logging.FileHandler(log_file_path, mode='w') # Overwrite log each time
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(log_formatter)
+        logger.addHandler(file_handler)
+        logger.info(f"--- Starting Generation for Sample Index {sample_index} ---")
+        logger.info(f"Using Master Seed: {master_seed}, Sample Seed: {master_seed + sample_index}")
+    
     # --- 1. Initialization ---
-    sample_id_numeric = config.get('start_index', 0) + sample_index
-    sample_id_str = f"sem_{sample_id_numeric:05d}" # ID for subdirectory
+    logger.info("Initialization...")
     file_suffix = f"_{sample_id_numeric:05d}"      # Suffix for main files
     
     # Define TWO output locations
@@ -375,19 +413,23 @@ def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: 
     # Create result holder
     sample = GeneratedSample(sample_id=sample_index, output_dir=subdir_output_path) # Store subdir as primary sample dir
 
-
     # --- 2. Raffle Effects ---
+    logger.info("Raffling effects...")
     raffler = Raffler(config.get('artifact_raffle', {}), rng)
     applied_effects_list = raffler.raffle_effects_for_image() # List of {'type':..., 'parameters':..., 'order':...}
+    logger.debug(f"Applied effects list: {applied_effects_list}")
 
     # --- 3. Background Generation ---
+    logger.info("Generating background...")
     bg_config = config.get('background', {})
+    # Pass logger to functions that might log warnings/errors? Optional.
     sample.background = generate_background(bg_config, size, rng) # Pass rng instance
     # Start with the background for clean image
     # Work with float32 internally
     current_image = sample.background.astype(np.float32).copy()
 
     # --- 4. Layer & Shape Generation ---
+    logger.info("Starting layer/shape generation...")
     layering_config = config.get('layering', {})
     # num_layers and layer_defs are chosen/randomized by config_randomizer now
     num_layers = layering_config.get('num_layers', 0)
@@ -401,7 +443,7 @@ def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: 
 
     for layer_idx, layer_conf in enumerate(layer_defs):
         # This layer_conf is already randomized for specific values
-        print(f"-- Processing Layer {layer_idx}, Type: {layer_conf.get('shape_type')} --")
+        logger.info(f"-- Processing Layer {layer_idx}, Type: {layer_conf.get('shape_type')} --")
         if not layer_conf.get('enabled', True): continue # Should already be filtered, but double check
 
         pattern_conf = layer_conf.get('pattern', {})
@@ -599,7 +641,7 @@ def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: 
             # Need to handle potential errors if shape is outside bounds
             try:
                  instance_original_mask = shape_instance.generate_mask(size)
-                 # print(f"DEBUG: Layer {layer_idx}, Instance {instance_idx}, Orig Mask Sum: {np.sum(instance_original_mask)}")
+                 logger.debug(f"Layer {layer_idx}, Instance {instance_idx}, Orig Mask Sum: {np.sum(instance_original_mask)}")
                  # Combine onto layer original mask
                  layer_original_mask = np.logical_or(layer_original_mask, instance_original_mask).astype(np.uint8)
             except Exception as e:
@@ -622,7 +664,7 @@ def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: 
                      except Exception as e:
                          print(f"Error applying shape artifact {effect_info['type']} to instance {instance_idx}: {e}")
 
-            # print(f"DEBUG: Layer {layer_idx}, Instance {instance_idx}, Actual Mask Sum: {np.sum(instance_actual_mask)}")
+            logger.debug(f"Layer {layer_idx}, Instance {instance_idx}, Actual Mask Sum: {np.sum(instance_actual_mask)}")
             # Combine onto layer actual mask
             layer_actual_mask = np.logical_or(layer_actual_mask, instance_actual_mask).astype(np.uint8)
             all_shapes_final_actual_masks.append(instance_actual_mask) # Store for instance seg
@@ -676,7 +718,7 @@ def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: 
 
     # --- Instance Mask Implementation ---
     if output_opts.get('generate_instance_masks', False):
-        print("Generating instance mask...")
+        logger.info("Generating instance mask...")
         instance_mask_img = np.zeros(size, dtype=np.uint16) # Use uint16 for more IDs
         current_id = 1
         # Use the per-instance actual masks we stored
@@ -685,11 +727,10 @@ def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: 
                  instance_mask_img[inst_mask > 0] = current_id
                  current_id += 1
         sample.instance_mask = instance_mask_img
-        # print(f"DEBUG: Instance Mask Max ID: {np.max(instance_mask_img)}")
+        logger.debug(f"Instance Mask Max ID: {np.max(instance_mask_img)}")
         if sample.instance_mask is not None:
              # Instance mask saving logic will be handled inside save_sample
              pass # No saving here, just generation
-        # print(f"DEBUG: Instance Mask Max ID: {np.max(instance_mask_img)}")
         # TODO: Save instance mask in save_sample
         ensure_dir_exists(os.path.join(sample.output_dir, "masks", "instance_masks")) # Redundant? Ensure it exists
         inst_fname = f"instance_mask.{mask_format}"
@@ -702,6 +743,7 @@ def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: 
     # TODO: Implement defect mask generation more robustly
 
     # --- 6. Apply Image-Level Artifacts & Noise ---
+    logger.info("Applying global effects...")
     final_image = sample.image_clean.copy()
     current_actual_masks = sample.get_actual_masks() # Keep track of masks needing geom warp
 
@@ -709,7 +751,7 @@ def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: 
         category = effect_info['category']
         artifact_type = effect_info['type']
         parameters = effect_info['parameters'] # Get the parameters dict
-        # print(f"DEBUG: Applying global effect: {artifact_type} (Category: {category})")
+        logger.debug(f"Applying global effect: {artifact_type} (Category: {category})")
         if category in ['image_level', 'instrument_effects', 'noise']:
             try:
                 # Noise uses create_noise factory
@@ -739,40 +781,86 @@ def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: 
 
                 # Apply based on type
                 if isinstance(instance, (AffineTransform, ElasticMeshDeform)): # Geometric warps
-                    # print(f"DEBUG: Applying geometric warp '{artifact_type}'...")
-                    # Apply the warp and unpack the returned tuple
-                    warped_image, warped_masks = instance.apply(final_image, masks=current_actual_masks) 
+                    logger.debug(f"Applying geometric warp '{artifact_type}'...")
+                    # Default warp field is None
+                    warp_field_generated = None
+
+                    # Special handling for ElasticMeshDeform return value
+                    if isinstance(instance, ElasticMeshDeform):
+                        apply_kwargs['masks'] = current_actual_masks # Pass masks
+                        # ElasticMeshDeform now returns 3 items
+                        warped_image, warped_masks, warp_field_generated = instance.apply(final_image, **apply_kwargs)
+                        if warp_field_generated is not None:
+                             logger.debug("Captured warp field from ElasticMeshDeform.")
+                             sample.warp_field = warp_field_generated # Store it in the sample object
+                    elif isinstance(instance, AffineTransform):
+                        apply_kwargs['masks'] = current_actual_masks # Pass masks
+                        # Affine returns only 2 items
+                        warped_image, warped_masks = instance.apply(final_image, **apply_kwargs)
+                        # No warp field generated by affine in this implementation
+                    
                     final_image = warped_image     # final_image remains an ndarray
                     current_actual_masks = warped_masks # Update the list of masks
-                    # print(f"DEBUG: Geometric warp '{artifact_type}' applied.")
-                    # Also warp combined/instance/defect masks if they exist
-                    if sample.combined_actual_mask is not None:
-                         # print("DEBUG: Warping combined_actual_mask...")
-                         # Apply to the mask, ignore the returned image (pass mask as image)
-                         # Pass the mask in a list, unpack the list
-                         _, [warped_combined_actual] = instance.apply(sample.combined_actual_mask, masks=[sample.combined_actual_mask])
-                         sample.combined_actual_mask = warped_combined_actual
-                    if sample.instance_mask is not None and output_opts.get('generate_instance_masks', False):
-                         # print("DEBUG: Warping instance_mask...")
-                          # Instance masks need nearest neighbor interpolation during warp
-                          # We might need to pass interpolation hints to apply method?
-                          # For now, assume apply handles masks correctly or modify apply.
-                          # Let's assume apply uses nearest for masks passed in the list.
-                         _, [warped_instance_mask] = instance.apply(sample.instance_mask, masks=[sample.instance_mask])
-                         sample.instance_mask = warped_instance_mask
-                    # TODO: Warp defect mask similarly if it exists
+                    logger.debug(f"Geometric warp '{artifact_type}' applied to main image and layer masks..")
+                    
+                    # --- Warp other masks (Combined, Instance, Defect) ---
+                    # Define a helper list for masks to warp (handles None)
+                    other_masks_to_warp = [
+                        ('combined_actual', sample.combined_actual_mask),
+                        ('instance', sample.instance_mask if output_opts.get('generate_instance_masks', False) else None),
+                        ('defect', sample.defect_mask) # Assuming sample.defect_mask exists
+                    ]
+                    for mask_name, mask_obj in other_masks_to_warp:
+                        if mask_obj is not None:
+                            logger.debug(f"Warping '{mask_name}' mask...")
+                            try:
+                                # Call apply, passing the mask as the 'image' data and in the 'masks' list
+                                warp_result = instance.apply(mask_obj, masks=[mask_obj])
+
+                                # --- CORRECTED UNPACKING for other masks ---
+                                # Check how many values were returned based on the instance type
+                                if isinstance(instance, ElasticMeshDeform):
+                                    # Expecting (warped_img, [warped_mask], warp_field)
+                                    if len(warp_result) != 3:
+                                         logger.error(f"ElasticMeshDeform apply for '{mask_name}' returned {len(warp_result)} values, expected 3!")
+                                         continue # Skip updating this mask
+                                    warped_mask_list = warp_result[1] # Get the list of masks (second element)
+                                elif isinstance(instance, AffineTransform):
+                                    # Expecting (warped_img, [warped_mask])
+                                    if len(warp_result) != 2:
+                                         logger.error(f"AffineTransform apply for '{mask_name}' returned {len(warp_result)} values, expected 2!")
+                                         continue
+                                    warped_mask_list = warp_result[1]
+                                else: # Should not happen if logic above is correct
+                                     logger.error("Unexpected instance type during auxiliary mask warp!")
+                                     continue
+
+                                # --- END CORRECTED UNPACKING ---
+
+                                # Assign the warped mask back (assuming list contains one mask)
+                                if warped_mask_list and warped_mask_list[0] is not None:
+                                    if mask_name == 'combined_actual': sample.combined_actual_mask = warped_mask_list[0]
+                                    elif mask_name == 'instance': sample.instance_mask = warped_mask_list[0]
+                                    elif mask_name == 'defect': sample.defect_mask = warped_mask_list[0]
+                                else:
+                                     logger.warning(f"Warping '{mask_name}' mask resulted in None or empty list.")
+
+                            except Exception as warp_err:
+                                 logger.error(f"Error warping auxiliary mask '{mask_name}': {warp_err}")
+                                 import traceback
+                                 logger.error(traceback.format_exc())
                 else: # Intensity, blur, noise artifacts
-                    # print(f"DEBUG: Applying intensity/noise effect '{artifact_type}'...")
+                    logger.debug(f"Applying intensity/noise effect '{artifact_type}'...")
                     # These return only the image, assignment is correct
                     # Ensure the instance.apply method ONLY returns the image ndarray
                     result = instance.apply(final_image, **apply_kwargs)
                     if isinstance(result, tuple):
-                         print(f"ERROR: Intensity/Noise artifact '{artifact_type}' unexpectedly returned a tuple!")
-                         # Handle error appropriately, maybe take first element?
-                         final_image = result[0] # Risky assumption
+                        logger.error(f"Intensity/Noise artifact '{artifact_type}' unexpectedly returned a tuple!")
+                        # Handle error appropriately, maybe take first element?
+                        final_image = result[0] # Risky assumption
                     else:
                          final_image = result
-                    # print(f"DEBUG: Effect '{artifact_type}' applied.")
+                    logger.debug(f"Effect '{artifact_type}' applied.")
 
             except Exception as e:
                  print(f"Error applying global effect {artifact_type}: {e}")
@@ -784,6 +872,7 @@ def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: 
 
     # --- 7. Generate Overlays ---
     if output_opts.get('save_debug_overlays', True): # Check default if needed
+        logger.info("Generating overlays ...")
         sample.overlay_image = generate_debug_overlay(sample.image_final, current_actual_masks) # Use warped masks
     meta_overlay_conf = config.get('metadata_overlay', {})
     sample.metadata_overlay_image = generate_metadata_overlay(meta_overlay_conf, config, size)
@@ -791,6 +880,7 @@ def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: 
 
     # --- 8. Prepare Metadata ---
     # Construct the detailed metadata dict as per Section 10 / 16.4
+    logger.info("Preparing metadata...")
     sample.metadata = {
         "generator_version": "0.1.0", # TODO: Get version dynamically
         "generation_timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -809,216 +899,315 @@ def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: 
     }
 
     # --- 9. Save Outputs ---
-    save_sample(sample, config, main_file_output_dir, subdir_output_path, file_suffix) # Pass config to know what to save and bit depth
+    logger.info("Saving output files...")
+    save_sample(sample, config, main_file_output_dir, subdir_output_path, file_suffix, logger) # Pass config to know what to save and bit depth
 
     # --- 10. Finalize ---
     end_time = time.time()
-    sample.metadata["runtime_seconds"] = round(end_time - start_time, 3)
-    # print(f"DEBUG pipeline: Updating metadata at path: '{sample.output_paths.get('metadata', 'METADATA PATH NOT FOUND')}'") # ADD DEBUG
+    runtime = round(end_time - start_time, 3)
+    sample.metadata["runtime_seconds"] = runtime
+    logger.info(f"Sample generation completed in {runtime:.3f}s")
+    
+    # --- Calculate and save hashes ---
+    if output_opts.get('save_hashes', False):
+         logger.info("Calculating file hashes...")
+         hashes = calculate_hashes(sample.output_paths, main_file_output_dir) # Use helper
+         h_fname = "hashes.json"
+         h_fpath = os.path.join(subdir_output_path_for_log, h_fname)
+         save_metadata(hashes, h_fpath) # Use save_metadata for json
+         paths = sample.output_paths # Get paths dict
+         paths['hashes'] = os.path.join(subdir_output_path, h_fname) # Add relative path
+         
+    # Re-save metadata with runtime and potentially hash path
     if 'metadata' in sample.output_paths and sample.output_paths['metadata']:
-        meta_full_path = os.path.join(subdir_output_path, sample.output_paths['metadata'])
-        # print(f"DEBUG pipeline: Reconstructed metadata full path: '{meta_full_path}'") # ADD DEBUG
+        meta_relative_path = sample.output_paths['metadata']
+        meta_full_path = os.path.join(main_file_output_dir, meta_relative_path)
+        logger.debug(f"Updating metadata at full path: '{meta_full_path}'")
         save_metadata(sample.metadata, meta_full_path)
     else:
-        print("ERROR: Could not find metadata path in sample.output_paths to save runtime.")
+        logger.error("Could not find metadata path in sample.output_paths to save runtime.")
 
+    print(f"Generated sample {sample_id_numeric} data. Log: {log_file_path if save_logs_flag else 'Disabled'}")
     print(f"Generated sample {sample_id_numeric} data in {sample.metadata['runtime_seconds']:.3f}s")
     print(f"  Main files in: {os.path.abspath(main_file_output_dir)}")
     print(f"  Supporting files in: {os.path.abspath(subdir_output_path)}")
+    
+    # Close log handler for this sample
+    if file_handler:
+        logger.removeHandler(file_handler)
+        file_handler.close()
 
     return sample
 
 
-def save_sample(sample: GeneratedSample, config: Dict[str, Any], main_dir: str, sub_dir: str, file_suffix: str):
-    """Saves the generated sample data to disk."""
-    masks_dir = os.path.join(sub_dir, "masks")
-    masks_vis_dir = os.path.join(sub_dir, "masks_vis")
-    ensure_dir_exists(masks_vis_dir) 
-        
-    paths = {} # Store actual *relative* paths from main_dir
+def save_sample(sample: GeneratedSample, config: Dict[str, Any], main_dir: str, sub_dir: str, file_suffix: str, logger: logging.Logger):
+    """
+    Saves the generated sample data to disk using the revised structure:
+    - Main images/meta in main_dir (with suffix)
+    - Details like masks, logs, configs in sub_dir (named sem_xxxxx)
+    """
+    logger.debug(f"Saving sample data. Main dir: '{main_dir}', Sub dir: '{sub_dir}'")
+    # Define specific subdirectories within the sample's subdir
+    layers_base_dir = os.path.join(sub_dir, "layers")
+    layers_combined_dir = os.path.join(sub_dir, "layers_combined")
+    logs_dir = os.path.join(sub_dir, "logs")
+    ensure_dir_exists(layers_base_dir)
+    ensure_dir_exists(layers_combined_dir)
+    ensure_dir_exists(logs_dir) # Create only if saving logs
 
-    # Get output options from the main config dict
+    # Dictionary to store relative paths (from main_dir) for metadata
+    paths = {}
+    sample_subdir_name = os.path.basename(sub_dir) # e.g., "sem_00001"
+
+    # --- Get Output Options ---
     output_opts = config.get('output_options', {})
-    img_format = output_opts.get('output_formats', {}).get('image_final', 'tif')
-    vis_mask_format = output_opts.get('output_formats', {}).get('masks_vis', 'png')
-    data_mask_format  = output_opts.get('output_formats', {}).get('masks', 'tif')
-    bit_depth_val = config.get('bit_depth', 16)
-    target_dtype = np.uint16 if bit_depth_val == 16 else np.uint8
-    mask_save_dtype = np.uint8
-    vis_mask_save_dtype = np.uint8
+    img_format_final = output_opts.get('output_formats', {}).get('image_final', 'tif') # Format for top-level final image
+    img_format_vis = output_opts.get('output_formats', {}).get('image_vis', 'png') # Format for internal visual images (clean, noisy, bg_vis)
+    mask_format_data = output_opts.get('output_formats', {}).get('masks_data', 'npy') # Format for mask data (NPY recommended)
+    mask_format_vis = output_opts.get('output_formats', {}).get('masks_vis', 'png') # Format for visual masks
+    instance_mask_format_data = output_opts.get('output_formats', {}).get('instance_mask_data', 'tif') # TIF good for uint16
+    save_per_layer_renders = output_opts.get('save_per_layer_renders', False) # Control per-layer image saving
+    save_optional_npy = output_opts.get('save_optional_npy', True) # Control saving .npy files
+    # Add flags for saving noise maps, warp fields etc.
+    save_noise_map = output_opts.get('save_noise_map', False)
+    save_warp_field = output_opts.get('save_warp_field', False)
+    save_gifs = output_opts.get('save_gifs', False)
+    save_hashes = output_opts.get('save_hashes', False) # Control hash saving
+    save_logs = output_opts.get('save_logs', False) # Control log saving
 
-    if output_opts.get('generate_instance_masks', False):
-        inst_masks_dir = os.path.join(masks_dir, "instance_masks")
+    bit_depth_val = config.get('bit_depth', 16)
+    target_dtype_final = np.uint16 if bit_depth_val == 16 else np.uint8 # For final TIF/PNG
+    target_dtype_vis = np.uint8 # Visual PNGs usually uint8
+    warp_field_vis_format = output_opts.get('output_formats',{}).get('warp_field_vis', 'png')
 
     # --- Helper function for visible masks ---
-    def make_mask_visible(mask_array: np.ndarray) -> np.ndarray:
-        if mask_array is None:
-             return None
-        # Scale 1s to 255, keep 0s as 0
-        vis_mask = (mask_array > 0).astype(vis_mask_save_dtype) * 255
-        return vis_mask
+    # Helper for visual masks
+    def make_mask_visible(mask_array: np.ndarray) -> Optional[np.ndarray]:
+        if mask_array is None: return None
+        return (mask_array > 0).astype(np.uint8) * 255
+
+    # Helper for saving numpy arrays
+    def save_npy(data_array: np.ndarray, filepath: str):
+        if data_array is None: return
+        ensure_dir_exists(os.path.dirname(filepath))
+        try:
+            np.save(filepath, data_array)
+        except Exception as e:
+            print(f"Error saving NPY file {filepath}: {e}")
     # --- End Helper ---
 
-    # Save final image
+    # --- 1. Save Top-Level Final Image ---
     if sample.image_final is not None:
-        fname = f"image_final{file_suffix}.{img_format}"
+        fname = f"{os.path.basename(sub_dir)}.{img_format_final}" # e.g., sem_00001.tif
         fpath = os.path.join(main_dir, fname)
-        # print(f"DEBUG save_sample: Saving image_final to '{fpath}'")
-        save_image(scale_to_uint(sample.image_final, target_dtype), fpath)
-        paths['image_final'] = fname # Relative to main_dir
+        logger.debug(f"Saving final image (top-level) to '{fpath}'")
+        save_image(scale_to_uint(sample.image_final, target_dtype_final), fpath)
+        paths['final_image_top_level'] = fname # Relative to main_dir
+        
+    # --- 2. Save Files in Sample Subdirectory (`sub_dir`) ---
 
-    fname_meta = f"meta{file_suffix}.json"
-    fpath_meta = os.path.join(sub_dir, fname_meta)
-    # print(f"DEBUG save_sample: Saving metadata to '{fpath_meta}'")
-    sample.metadata['output_files'] = paths # Record paths saved *so far*
-    save_metadata(sample.metadata, fpath_meta)
-    paths['metadata'] = fname_meta # Store final relative path
+    #   --- Root of Subdir ---
+    if sample.image_clean is not None:
+        fname = f"image_clean.{img_format_vis}"
+        fpath = os.path.join(sub_dir, fname)
+        save_image(scale_to_uint(sample.image_clean, target_dtype_vis), fpath)
+        paths['image_clean'] = os.path.join(sample_subdir_name, fname)
 
-    if sample.overlay_image is not None and output_opts.get('save_debug_overlays', False):
-         fname = f"overlay{file_suffix}.png"
-         fpath = os.path.join(sub_dir, fname)
-         # print(f"DEBUG save_sample: Saving overlay to '{fpath}'")
-         save_image(sample.overlay_image, fpath)
-         paths['overlay'] = fname
+    if sample.image_final is not None: # Save noisy visual version too
+        fname = f"image_final_noisy.{img_format_vis}"
+        fpath = os.path.join(sub_dir, fname)
+        save_image(scale_to_uint(sample.image_final, target_dtype_vis), fpath)
+        paths['image_final_noisy'] = os.path.join(sample_subdir_name, fname)
 
-    if sample.metadata_overlay_image is not None and config.get('metadata_overlay',{}).get('enabled', False):
-         fname = f"metadata_overlay{file_suffix}.png"
-         fpath = os.path.join(sub_dir, fname)
-         # print(f"DEBUG save_sample: Saving metadata overlay to '{fpath}'")
-         save_image(sample.metadata_overlay_image, fpath)
-         paths['metadata_overlay'] = fname
+    if sample.combined_original_mask is not None:
+        if save_optional_npy: save_npy(sample.combined_original_mask.astype(np.uint8), os.path.join(sub_dir, "combined_original_mask.npy"))
+        save_image(make_mask_visible(sample.combined_original_mask), os.path.join(sub_dir, f"combined_original_mask_vis.{mask_format_vis}"))
+        paths['combined_original_mask'] = os.path.join(sample_subdir_name, "combined_original_mask.npy") # Point to data
+        paths['combined_original_mask_vis'] = os.path.join(sample_subdir_name, f"combined_original_mask_vis.{mask_format_vis}")
 
-    # --- Save Supporting Files (in sub_dir) ---
-    sample_subdir_name = os.path.basename(sub_dir) # e.g., "sem_00000"
+    if sample.combined_actual_mask is not None:
+        if save_optional_npy: save_npy(sample.combined_actual_mask.astype(np.uint8), os.path.join(sub_dir, "combined_actual_mask.npy"))
+        save_image(make_mask_visible(sample.combined_actual_mask), os.path.join(sub_dir, f"combined_actual_mask_vis.{mask_format_vis}"))
+        paths['combined_actual_mask'] = os.path.join(sample_subdir_name, "combined_actual_mask.npy")
+        paths['combined_actual_mask_vis'] = os.path.join(sample_subdir_name, f"combined_actual_mask_vis.{mask_format_vis}")
 
-    if output_opts.get('save_intermediate_images', False):
-        if sample.image_clean is not None:
-             fname = f"image_clean.{img_format}"
-             fpath = os.path.join(sub_dir, fname)
-             # print(f"DEBUG save_sample: Saving image_clean to '{fpath}'")
-             save_image(scale_to_uint(sample.image_clean, target_dtype), fpath)
-             paths['image_clean'] = os.path.join(sample_subdir_name, fname) # Path relative to main_dir
-        if sample.background is not None:
-             fname = f"background.{img_format}"
-             fpath = os.path.join(sub_dir, fname)
-             # print(f"DEBUG save_sample: Saving background to '{fpath}'")
-             save_image(scale_to_uint(sample.background, target_dtype), fpath)
-             paths['background'] = os.path.join(sample_subdir_name, fname)
-             
-    # --- Add saving logic for instance mask ---
+    if sample.instance_mask is not None and output_opts.get('generate_instance_masks', False):
+        # Save data mask (TIF recommended for uint16)
+        inst_fname_data = f"instance_mask.{instance_mask_format_data}"
+        inst_fpath_data = os.path.join(sub_dir, inst_fname_data)
+        save_image(sample.instance_mask, inst_fpath_data) # Save raw uint16/32 data
+        paths['instance_mask'] = os.path.join(sample_subdir_name, inst_fname_data)
+        # Save visual mask
+        # (Colorized version generation logic needs to be here or called from here)
+        max_id = np.max(sample.instance_mask)
+        vis_instance_mask = np.zeros((sample.instance_mask.shape[0], sample.instance_mask.shape[1], 3), dtype=np.uint8)
+        if max_id > 0:
+            hue = ((sample.instance_mask * (180.0 / (max_id + 1))) % 180).astype(np.uint8)
+            saturation = np.full_like(hue, 200); saturation[sample.instance_mask == 0] = 0
+            value = np.full_like(hue, 200); value[sample.instance_mask == 0] = 0
+            hsv_mask = cv2.merge([hue, saturation, value])
+            vis_instance_mask = cv2.cvtColor(hsv_mask, cv2.COLOR_HSV2BGR)
+        inst_fname_vis = f"instance_mask_vis.{mask_format_vis}"
+        inst_fpath_vis = os.path.join(sub_dir, inst_fname_vis)
+        save_image(vis_instance_mask, inst_fpath_vis)
+        paths['instance_mask_vis'] = os.path.join(sample_subdir_name, inst_fname_vis)
 
-    # Save masks (in sub_dir/masks)
-    for i, (orig_mask, actual_mask) in enumerate(sample.layer_masks):
-        if orig_mask is not None:
-            # Save Data Mask
-            fname_data = f"layer_{i:02d}_original.{data_mask_format}"
-            fpath_data = os.path.join(masks_dir, fname_data)
-            # print(f"DEBUG save_sample: Saving layer {i} original mask DATA to '{fpath_data}'")
-            save_image(orig_mask.astype(mask_save_dtype), fpath_data)
-            paths[f'mask_layer_{i:02d}_original'] = os.path.join(sample_subdir_name, "masks", fname_data)
-            # Save Visible Mask
-            fname_vis = f"layer_{i:02d}_original_VIS.{vis_mask_format}"
-            fpath_vis = os.path.join(masks_vis_dir, fname_vis)
-            # print(f"DEBUG save_sample: Saving layer {i} original mask VIS to '{fpath_vis}'")
-            save_image(make_mask_visible(orig_mask), fpath_vis)
-            # paths[f'mask_layer_{i:02d}_original_vis'] = os.path.join(sample_subdir_name, "masks_vis", fname_vis) # Optionally add to paths
 
-        if actual_mask is not None:
-            # Save Data Mask
-            fname_data = f"layer_{i:02d}_actual.{data_mask_format}"
-            fpath_data = os.path.join(masks_dir, fname_data)
-            # print(f"DEBUG save_sample: Saving layer {i} actual mask DATA to '{fpath_data}'")
-            save_image(actual_mask.astype(mask_save_dtype), fpath_data)
-            paths[f'mask_layer_{i:02d}_actual'] = os.path.join(sample_subdir_name, "masks", fname_data)
-            # Save Visible Mask
-            fname_vis = f"layer_{i:02d}_actual_VIS.{vis_mask_format}"
-            fpath_vis = os.path.join(masks_vis_dir, fname_vis)
-            # print(f"DEBUG save_sample: Saving layer {i} actual mask VIS to '{fpath_vis}'")
-            save_image(make_mask_visible(actual_mask), fpath_vis)
-            # paths[f'mask_layer_{i:02d}_actual_vis'] = os.path.join(sample_subdir_name, "masks_vis", fname_vis)
+    if save_noise_map and sample.noise_mask is not None: # Assuming noise stored in sample.noise_mask
+         if save_optional_npy: save_npy(sample.noise_mask, os.path.join(sub_dir, "noise_map_added.npy"))
+         # Scale noise map [-X, +X] -> [0, 255] for visualization
+         noise_vis = sample.noise_mask
+         min_n, max_n = np.min(noise_vis), np.max(noise_vis)
+         if max_n > min_n: noise_vis = ((noise_vis - min_n) / (max_n - min_n)) * 255
+         else: noise_vis = np.zeros_like(noise_vis) + 128 # Gray if flat
+         save_image(noise_vis.astype(np.uint8), os.path.join(sub_dir, f"noise_map_added_vis.{mask_format_vis}"))
+         paths['noise_map_added'] = os.path.join(sample_subdir_name, "noise_map_added.npy")
+         paths['noise_map_added_vis'] = os.path.join(sample_subdir_name, f"noise_map_added_vis.{mask_format_vis}")
+
+    # --- Save Warp Field (in sub_dir) IF REQUESTED and AVAILABLE ---
+    if save_warp_field and sample.warp_field is not None:
+        logger.debug("Saving displacement field.")
+        wf_npy_fname = "warp_field.npy"
+        wf_npy_fpath = os.path.join(sub_dir, wf_npy_fname)
+        if save_optional_npy:
+            save_npy(sample.warp_field, wf_npy_fpath)
+            paths['warp_field'] = os.path.join(sample_subdir_name, wf_npy_fname)
+
+        # --- Generate and Save Warp Field Visualization ---
+        try:
+            # Calculate expected max displacement (e.g., from config if available, or auto)
+            # max_disp_param = config.get('artifact_raffle',{}).get('image_level',{}).get('effects',{}).get('elastic_mesh_deform',{}).get('parameter_ranges',{}).get('amplitude',[1.0, 15.0])[-1] # Get max possible amplitude
+            # For now, just auto-scale based on the field itself by passing None
+            max_disp_param = None
+
+            logger.debug("Generating warp field visualization...")
+            warp_vis = visualize_warp_field(sample.warp_field, max_expected_disp=max_disp_param)
+
+            wf_vis_fname = f"warp_field_vis.{warp_field_vis_format}"
+            wf_vis_fpath = os.path.join(sub_dir, wf_vis_fname)
+            save_image(warp_vis, wf_vis_fpath) # Saves the BGR image
+            paths['warp_field_vis'] = os.path.join(sample_subdir_name, wf_vis_fname)
+            logger.debug(f"Saved warp field visualization to {wf_vis_fpath}")
+
+        except Exception as e:
+             logger.error(f"Error generating/saving warp field visualization: {e}")
+             import traceback
+             logger.error(traceback.format_exc())
+         
+    if save_gifs:
+        print("DEBUG save_sample: Generating and saving GIFs...")
+        # GIF for Actual Masks Build-up
+        actual_mask_frames = [make_mask_visible(m) for m in sample.cumulative_masks if m is not None]
+        if actual_mask_frames:
+            gif_fname = "layers_actual_masks.gif"
+            gif_fpath = os.path.join(layers_combined_dir, gif_fname)
+            save_gif(actual_mask_frames, gif_fpath, fps=2) # Slow FPS for layers
+            paths['layers_actual_masks_gif'] = os.path.join(sample_subdir_name, "layers_combined", gif_fname)
+
+        # GIF for Original Masks Build-up (Requires generating cumulative original masks)
+        # TODO: Generate cumulative original masks in pipeline if this GIF is desired
+        # original_mask_frames = [make_mask_visible(m) for m in sample.cumulative_original_masks if m is not None]
+        # if original_mask_frames:
+        #    gif_fname = "layers_original_masks.gif"
+        #    # ... save gif ...
+        #    paths['layers_original_masks_gif'] = ...
+        else:
+            print("DEBUG save_sample: Cumulative original masks not available for GIF.")
+         
+    # Save specific config for this sample
+    cfg_fname = "configuration.json"
+    cfg_fpath = os.path.join(sub_dir, cfg_fname)
+    save_metadata(config, cfg_fpath) # Save the sample-specific config used
+    paths['configuration'] = os.path.join(sample_subdir_name, cfg_fname)
+
+    # Save seed text file
+    seed_fname = "seed.txt"
+    seed_fpath = os.path.join(sub_dir, seed_fname)
+    save_text(str(sample.metadata['seed_used']), seed_fpath)
+    paths['seed_file'] = os.path.join(sample_subdir_name, seed_fname)
+    
+    #   --- /layers_combined/ Subdir ---
+    if sample.background is not None:
+        if save_optional_npy: save_npy(sample.background, os.path.join(layers_combined_dir, "background.npy"))
+        save_image(scale_to_uint(sample.background, target_dtype_vis), os.path.join(layers_combined_dir, f"background_vis.{img_format_vis}"))
+        paths['background_data'] = os.path.join(sample_subdir_name, "layers_combined", "background.npy")
+        paths['background_vis'] = os.path.join(sample_subdir_name, "layers_combined", f"background_vis.{img_format_vis}")
 
     for i, cum_mask in enumerate(sample.cumulative_masks):
          if cum_mask is not None:
-            # Data
-            fname_data = f"layer_{i:02d}_cumulative.{data_mask_format}"
-            fpath_data = os.path.join(masks_dir, fname_data)
-            # print(f"DEBUG save_sample: Saving cumulative mask {i} DATA to '{fpath_data}'")
-            save_image(cum_mask.astype(mask_save_dtype), fpath_data)
-            paths[f'mask_layer_{i:02d}_cumulative'] = os.path.join(sample_subdir_name, "masks", fname_data)
-            # Vis
-            fname_vis = f"layer_{i:02d}_cumulative_VIS.{vis_mask_format}"
-            fpath_vis = os.path.join(masks_vis_dir, fname_vis)
-            # print(f"DEBUG save_sample: Saving cumulative mask {i} VIS to '{fpath_vis}'")
-            save_image(make_mask_visible(cum_mask), fpath_vis)
+            if save_optional_npy: save_npy(cum_mask.astype(np.uint8), os.path.join(layers_combined_dir, f"cumulative_actual_mask_{i:02d}.npy"))
+            save_image(make_mask_visible(cum_mask), os.path.join(layers_combined_dir, f"cumulative_actual_mask_{i:02d}_vis.{mask_format_vis}"))
+            paths[f'cumulative_actual_mask_{i:02d}'] = os.path.join(sample_subdir_name, "layers_combined", f"cumulative_actual_mask_{i:02d}.npy")
+            paths[f'cumulative_actual_mask_{i:02d}_vis'] = os.path.join(sample_subdir_name, "layers_combined", f"cumulative_actual_mask_{i:02d}_vis.{mask_format_vis}")
+    
+    #   --- /layers/layer_xx/ Subdirs ---
+    for i, (orig_mask, actual_mask) in enumerate(sample.layer_masks):
+        layer_xx_dir = os.path.join(layers_base_dir, f"layer_{i:02d}")
+        ensure_dir_exists(layer_xx_dir)
+        layer_rel_path = os.path.join("layers", f"layer_{i:02d}") # Relative path for metadata
 
-    # Save Combined Masks (Data + Vis)
-    if sample.combined_original_mask is not None:
-        # Data
-        fname_data = f"combined_original.{data_mask_format}"
-        fpath_data = os.path.join(masks_dir, fname_data)
-        # print(f"DEBUG save_sample: Saving combined original mask DATA to '{fpath_data}'")
-        save_image(sample.combined_original_mask.astype(mask_save_dtype), fpath_data)
-        paths['combined_original'] = os.path.join(sample_subdir_name, "masks", fname_data)
-        # Vis
-        fname_vis = f"combined_original_VIS.{vis_mask_format}"
-        fpath_vis = os.path.join(masks_vis_dir, fname_vis)
-        # print(f"DEBUG save_sample: Saving combined original mask VIS to '{fpath_vis}'")
-        save_image(make_mask_visible(sample.combined_original_mask), fpath_vis)
+        if orig_mask is not None:
+            if save_optional_npy: save_npy(orig_mask.astype(np.uint8), os.path.join(layer_xx_dir, "original_mask.npy"))
+            save_image(make_mask_visible(orig_mask), os.path.join(layer_xx_dir, f"original_mask_vis.{mask_format_vis}"))
+            paths[f'layer_{i:02d}_original_mask'] = os.path.join(sample_subdir_name, layer_rel_path, "original_mask.npy")
+            paths[f'layer_{i:02d}_original_mask_vis'] = os.path.join(sample_subdir_name, layer_rel_path, f"original_mask_vis.{mask_format_vis}")
+            # Optional original render
+            # if save_per_layer_renders and corresponding data exists in sample: save here...
 
-    if sample.combined_actual_mask is not None:
-        # Data
-        fname_data = f"combined_actual.{data_mask_format}"
-        fpath_data = os.path.join(masks_dir, fname_data)
-        # print(f"DEBUG save_sample: Saving combined actual mask DATA to '{fpath_data}'")
-        save_image(sample.combined_actual_mask.astype(mask_save_dtype), fpath_data)
-        paths['combined_actual'] = os.path.join(sample_subdir_name, "masks", fname_data)
-        # Vis
-        fname_vis = f"combined_actual_VIS.{vis_mask_format}"
-        fpath_vis = os.path.join(masks_vis_dir, fname_vis)
-        # print(f"DEBUG save_sample: Saving combined actual mask VIS to '{fpath_vis}'")
-        save_image(make_mask_visible(sample.combined_actual_mask), fpath_vis)
-        
-    # Save instance mask (already uint16 with IDs, maybe save a colorized vis version?)
-    if output_opts.get('generate_instance_masks', False) and sample.instance_mask is not None:
-        inst_masks_data_dir = os.path.join(masks_dir, "instance_masks") # Data dir
-        ensure_dir_exists(inst_masks_data_dir)
-        # Save raw uint16 data mask
-        inst_fname_data = f"instance_mask.{data_mask_format}" # Use data format (TIF better for uint16)
-        inst_fpath_data = os.path.join(inst_masks_data_dir, inst_fname_data)
-        # print(f"DEBUG: Saving instance mask DATA to '{inst_fpath_data}'")
-        save_image(sample.instance_mask, inst_fpath_data) # Save as uint16
-        paths['instance_mask'] = os.path.join(sample_subdir_name, "masks", "instance_masks", inst_fname_data)
+        if actual_mask is not None:
+             if save_optional_npy: save_npy(actual_mask.astype(np.uint8), os.path.join(layer_xx_dir, "actual_mask.npy"))
+             save_image(make_mask_visible(actual_mask), os.path.join(layer_xx_dir, f"actual_mask_vis.{mask_format_vis}"))
+             paths[f'layer_{i:02d}_actual_mask'] = os.path.join(sample_subdir_name, layer_rel_path, "actual_mask.npy")
+             paths[f'layer_{i:02d}_actual_mask_vis'] = os.path.join(sample_subdir_name, layer_rel_path, f"actual_mask_vis.{mask_format_vis}")
+             # Optional actual render
+             # if save_per_layer_renders and corresponding data exists in sample: save here...
+             # Optional defect mask
+             # if output_opts.get('save_defect_mask', False) and orig_mask is not None: calculate and save XOR mask here...
 
-        # Save a colorized visible version (optional)
-        inst_fname_vis = f"instance_mask_VIS.{vis_mask_format}" # e.g., png
-        inst_fpath_vis = os.path.join(masks_vis_dir, inst_fname_vis) # Save in masks_vis
-        # print(f"DEBUG: Saving instance mask VIS to '{inst_fpath_vis}'")
-        # Create color map (e.g., using HSV color space)
-        max_id = np.max(sample.instance_mask)
-        if max_id > 0:
-             # Generate distinct colors (wrapping hue)
-             vis_instance_mask = np.zeros((sample.instance_mask.shape[0], sample.instance_mask.shape[1], 3), dtype=np.uint8)
-             hue = ((sample.instance_mask * (180 // (max_id+1))) % 180).astype(np.uint8) # Spread hues
-             saturation = np.full_like(hue, 200, dtype=np.uint8) # Fixed saturation
-             value = np.full_like(hue, 200, dtype=np.uint8)      # Fixed value/brightness
-             # Set background (ID=0) to black in HSV
-             saturation[sample.instance_mask == 0] = 0
-             value[sample.instance_mask == 0] = 0
-             hsv_mask = cv2.merge([hue, saturation, value])
-             vis_instance_mask = cv2.cvtColor(hsv_mask, cv2.COLOR_HSV2BGR)
-             save_image(vis_instance_mask, inst_fpath_vis)
-        else: # Empty instance mask
-             save_image(np.zeros((size[0], size[1], 3), dtype=np.uint8), inst_fpath_vis) # Save black image
+    # --- Update paths dict in sample object ---
+    # This will be saved again when runtime is added to metadata
+    sample.output_paths = paths
+    sample.metadata['output_files'] = paths
 
-    # TODO: Save instance mask, defect mask, noise mask similarly into sub_dir/masks or sub_dir
+    # --- OPTIONAL: Calculate and save hashes ---
+    if save_hashes:
+         print("DEBUG save_sample: Calculating file hashes...")
+         # TODO: Implement hash calculation (e.g., sha256) for key files listed in paths
+         # Store hashes in hashes.json within sub_dir
+         # paths['hashes'] = os.path.join(sample_subdir_name, "hashes.json")
+         pass # Placeholder
 
-    # Save seed and elapsed time text files in sub_dir
-    fname_seed = "seed.txt"
-    fpath_seed = os.path.join(sub_dir, fname_seed)
-    # print(f"DEBUG save_sample: Saving seed text to '{fpath_seed}'")
-    save_text(str(sample.metadata['seed_used']), fpath_seed)
-    paths['seed_file'] = os.path.join(sample_subdir_name, fname_seed)
+    # --- OPTIONAL: Save Logs ---
+    if save_logs:
+         print("DEBUG save_sample: Saving generation log...")
+         # TODO: Implement proper logging redirection per sample
+         # Save log content to logs/generation.log within sub_dir
+         # paths['log_file'] = os.path.join(sample_subdir_name, "logs", "generation.log")
+         pass # Placeholder
 
     # Update the paths dict in the sample object *before* it's saved in metadata again later
     sample.output_paths = paths
     sample.metadata['output_files'] = paths # Ensure metadata reflects final paths
+    
+def calculate_hashes(output_paths: Dict[str, str], base_dir: str, algo: str = 'sha256') -> Dict[str, str]:
+    """Calculates hashes for files listed in output_paths."""
+    hashes = {}
+    for key, rel_path in output_paths.items():
+        # Skip metadata/hash file itself? Or include? Including for now.
+        # if key in ['metadata', 'hashes', 'configuration', 'seed_file']: continue
+        full_path = os.path.join(base_dir, rel_path)
+        if os.path.isfile(full_path):
+            try:
+                 hasher = hashlib.new(algo)
+                 with open(full_path, 'rb') as f:
+                      while True:
+                           chunk = f.read(4096) # Read in chunks
+                           if not chunk: break
+                           hasher.update(chunk)
+                 hashes[rel_path] = hasher.hexdigest()
+            except Exception as e:
+                 print(f"Warning: Could not calculate hash for {rel_path}: {e}")
+                 hashes[rel_path] = f"Error: {e}"
+        else:
+             hashes[rel_path] = "File not found or not a file"
+    return hashes
