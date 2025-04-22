@@ -97,17 +97,39 @@ def randomize_config_for_sample(base_config: Dict[str, Any], rng: random.Random)
                 bg_config['noise_type'] = randomize_value(bg_config.get('noise_type'), parent_key='background.noise_type')
                 bg_config['noise_amplitude'] = randomize_value(bg_config.get('noise_amplitude'), parent_key='background.noise_amplitude')
                 bg_config['noise_frequency'] = randomize_value(bg_config.get('noise_frequency'), parent_key='background.noise_frequency')
-                # --- ADD RANDOMIZATION FOR NOISE BASE ---
                 bg_config['noise_base_intensity'] = randomize_value(bg_config.get('noise_base_intensity'), parent_key='background.noise_base_intensity')
-                # --- ADD RANDOMIZATION FOR OTHER NOISE PARAMS ---
                 bg_config['noise_octaves'] = randomize_value(bg_config.get('noise_octaves'), parent_key='background.noise_octaves')
                 bg_config['noise_persistence'] = randomize_value(bg_config.get('noise_persistence'), parent_key='background.noise_persistence')
                 bg_config['noise_lacunarity'] = randomize_value(bg_config.get('noise_lacunarity'), parent_key='background.noise_lacunarity')
 
             elif chosen_bg_type == 'composite':
                 bg_config['flat_intensity'] = randomize_value(bg_config.get('flat_intensity'), parent_key='background.flat_intensity')
-                # TODO: Add randomization for composite parameters if defined
-                pass
+                bg_config['gradient_style'] = randomize_value(bg_config.get('gradient_style'), parent_key='background.gradient_style')
+                bg_config['gradient_params'] = randomize_value(bg_config['gradient_params'], parent_key='background.gradient_params')
+                bg_config['noise_type'] = randomize_value(bg_config.get('noise_type'), parent_key='background.noise_type')
+                bg_config['noise_amplitude'] = randomize_value(bg_config.get('noise_amplitude'), parent_key='background.noise_amplitude')
+                bg_config['noise_frequency'] = randomize_value(bg_config.get('noise_frequency'), parent_key='background.noise_frequency')
+                bg_config['noise_base_intensity'] = randomize_value(bg_config.get('noise_base_intensity'), parent_key='background.noise_base_intensity')
+                bg_config['noise_octaves'] = randomize_value(bg_config.get('noise_octaves'), parent_key='background.noise_octaves')
+                bg_config['noise_persistence'] = randomize_value(bg_config.get('noise_persistence'), parent_key='background.noise_persistence')
+                bg_config['noise_lacunarity'] = randomize_value(bg_config.get('noise_lacunarity'), parent_key='background.noise_lacunarity')
+                # Randomize composite-specific controls
+                bg_config['composite_comp1_type'] = randomize_value(bg_config.get('composite_comp1_type'), parent_key='background.composite_comp1_type')
+                bg_config['composite_comp2_type'] = randomize_value(bg_config.get('composite_comp2_type'), parent_key='background.composite_comp2_type')
+                bg_config['composite_combine_mode'] = randomize_value(bg_config.get('composite_combine_mode'), parent_key='background.composite_combine_mode')
+                bg_config['composite_base_intensity'] = randomize_value(bg_config.get('composite_base_intensity'), parent_key='background.composite_base_intensity')
+                # Randomize nested params if they exist (e.g., composite_comp1_params)
+                if isinstance(bg_config.get('composite_comp1_params'), dict):
+                     bg_config['composite_comp1_params'] = randomize_value(bg_config['composite_comp1_params'], parent_key='background.composite_comp1_params')
+                if isinstance(bg_config.get('composite_comp2_params'), dict):
+                     bg_config['composite_comp2_params'] = randomize_value(bg_config['composite_comp2_params'], parent_key='background.composite_comp2_params')
+                # Also ensure the underlying gradient/noise params (if not nested) are randomized
+                # This might require randomizing them always, or checking comp types
+                # Safer approach: Randomize all potential sub-params always
+                bg_config['gradient_style'] = randomize_value(bg_config.get('gradient_style'), parent_key='background.gradient_style')
+                if isinstance(bg_config.get('gradient_params'), dict): bg_config['gradient_params'] = randomize_value(bg_config['gradient_params'], parent_key='background.gradient_params')
+                bg_config['noise_type'] = randomize_value(bg_config.get('noise_type'), parent_key='background.noise_type')
+                bg_config['noise_amplitude'] = randomize_value(bg_config.get('noise_amplitude'), parent_key='background.noise_amplitude')
 
         # --- Randomize Layering ---
         layering_config = sample_config.get('layering', {})

@@ -1,10 +1,9 @@
 import numpy as np
 import cv2
-from typing import Dict, Any
 
 from ..base_artifact import BaseArtifact
-# Assumes a Perlin noise utility exists:
-# from ...utils.noise_utils import generate_perlin_noise_2d
+from ...utils.noise_utils import generate_procedural_noise_2d
+from typing import Dict, Any, Tuple, List
 
 class TopographicShading(BaseArtifact):
     """Applies brightness modulation based on a synthetic height map slope."""
@@ -15,7 +14,8 @@ class TopographicShading(BaseArtifact):
 
         Args:
             image_data (np.ndarray): The image (float32 or int).
-            **kwargs: Optional args like layer info if source is 'derived'.
+            **kwargs: Can include 'cumulative_masks' (List[np.ndarray]) if source is 'derived',
+                      and 'rng' (random.Random) if needed for Perlin seed.
 
         Returns:
             np.ndarray: Modified image.
@@ -23,38 +23,59 @@ class TopographicShading(BaseArtifact):
         rows, cols = image_data.shape[:2]
         output_image = image_data.astype(np.float32) # Work in float
 
-        contrast = self.get_param('height_contrast', 0.3) # Modulation strength
-        slope_angle_deg = self.get_param('slope_angle', 45.0) # Light source direction
+        contrast = self.get_param('height_contrast', 0.3)
+        slope_angle_deg = self.get_param('slope_angle', 45.0)
         source = self.get_param('height_map_source', 'random_perlin')
+        height_map = np.zeros_like(output_image, dtype=np.float32)
 
         # 1. Generate or get the height map
         if source == 'derived':
-            # Requires access to layer structure - complex integration needed
-            print("Warning: 'derived' height map source not implemented for TopographicShading.")
-            # Fallback: generate a simple gradient or flat map?
-            height_map = np.zeros_like(output_image, dtype=np.float32) # Flat map = no effect
-        elif source == 'random_perlin':
-            try:
-                # Placeholder call - requires actual implementation
-                # from ...utils.noise_utils import generate_perlin_noise_2d
-                # Assume generate_perlin_noise_2d exists and returns noise in [-1, 1] or [0, 1]
-                # octaves = 4
-                # persistence = 0.5
-                # lacunarity = 2.0
-                # scale = 50.0 # Controls feature size
-                # height_map = generate_perlin_noise_2d((rows, cols), (scale, scale), octaves, persistence, lacunarity)
-                print("Warning: Perlin noise generation not implemented. Using simple gradient as height map.")
-                # Simple gradient fallback
-                y_coords, x_coords = np.mgrid[0:rows, 0:cols]
-                height_map = (y_coords.astype(np.float32) / rows) * 2.0 - 1.0 # Range [-1, 1]
+            cumulative_masks = kwargs.get('cumulative_masks')
+            if cumulative_masks and isinstance(cumulative_masks, list):
+                print(f"DEBUG Topo: Deriving height map from {len(cumulative_masks)} cumulative masks.")
+                # Simple approach: Each subsequent cumulative mask adds a fixed height offset.
+                # Normalize height to approx [0, 1] range.
+                height_step = 1.0 / max(1, len(cumulative_masks))
+                current_height = 0.0
+                for mask in cumulative_masks:
+                     if mask is not None:
+                          height_map[mask > 0] = current_height + height_step # Pixels in this layer get higher value
+                     current_height += height_step
+                # Optionally add a small amount of blur to smooth step edges
+                height_map = cv2.GaussianBlur(height_map, (5, 5), 0.5)
+            else:
+                 print("Warning: 'derived' height map source selected but no 'cumulative_masks' provided. Using flat map.")
+                 height_map.fill(0.0) # Flat map = no effect
 
-            except ImportError:
-                 print("Warning: Perlin noise utility not found. Using simple gradient as height map.")
-                 y_coords, x_coords = np.mgrid[0:rows, 0:cols]
-                 height_map = (y_coords.astype(np.float32) / rows) * 2.0 - 1.0
+        elif source == 'random_perlin':
+            # Get Perlin parameters (can be randomized via config)
+            scale_param = self.get_param('perlin_frequency', 5.0) # Features per image width
+            scale = cols / max(1.0, scale_param)
+            octaves = int(self.get_param('perlin_octaves', 4))
+            persistence = float(self.get_param('perlin_persistence', 0.5))
+            lacunarity = float(self.get_param('perlin_lacunarity', 2.0))
+            rng = kwargs.get('rng') # Need RNG for seed
+            base_seed = rng.randint(0, 100000) if rng else 0
+
+            try:
+                # Generate noise in [0, 1] range to represent height
+                height_map = generate_procedural_noise_2d(
+                    shape=(rows, cols),
+                    scale=scale, octaves=octaves, persistence=persistence,
+                    lacunarity=lacunarity, base_seed=base_seed,
+                    noise_type='perlin', normalize_range=(0.0, 1.0)
+                )
+            except Exception as e:
+                 print(f"Warning: Failed to generate Perlin noise for height map ({e}). Using flat map.")
+                 height_map.fill(0.0)
         else:
-             print(f"Warning: Unknown height_map_source '{source}'. No shading applied.")
-             height_map = np.zeros_like(output_image, dtype=np.float32)
+            print(f"Warning: Unknown height_map_source '{source}'. No shading applied.")
+            height_map.fill(0.0)
+             
+        # --- Steps 2, 3, 4: Calculate gradient and apply shading (remain the same) ---
+        if np.max(height_map) - np.min(height_map) < 1e-6: # Skip if flat map
+            print("DEBUG Topo: Height map is flat, skipping shading.")
+            return image_data # Return original image
 
         # 2. Calculate gradient (slope) of the height map
         grad_y = cv2.Sobel(height_map, cv2.CV_32F, 1, 0, ksize=3)
@@ -66,8 +87,7 @@ class TopographicShading(BaseArtifact):
 
         # Normalize gradient vectors (where magnitude > 0)
         magnitude = np.sqrt(grad_x**2 + grad_y**2)
-        # Avoid division by zero
-        inv_magnitude = np.divide(1.0, magnitude, where=magnitude != 0)
+        inv_magnitude = np.divide(1.0, magnitude, where=magnitude > 1e-6, out=np.zeros_like(magnitude)) # Handle zero magnitude
 
         norm_grad_x = grad_x * inv_magnitude
         norm_grad_y = grad_y * inv_magnitude

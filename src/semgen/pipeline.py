@@ -9,7 +9,7 @@ from .core import GeneratedSample
 from .config_loader import load_config # Assuming using this loader
 from .raffle import Raffler
 from .shapes import create_shape
-from .artifacts import (create_artifact, AffineTransform, ElasticMeshDeform)
+from .artifacts import (create_artifact, AffineTransform, ElasticMeshDeform, TopographicShading)
 from .noise import create_noise
 from .utils import (generate_procedural_noise_2d, 
                    save_image, save_metadata, save_text, ensure_dir_exists,
@@ -25,66 +25,134 @@ def generate_background(config: Dict[str, Any], size: Tuple[int, int], rng: rand
     height, width = size
     # Default to float32 [0,1] for internal processing
     background = np.zeros((height, width), dtype=np.float32)
+    
+    # --- Define helper to generate a single component ---
+    # This avoids duplicating gradient/noise logic
+    def generate_component(comp_type: str, comp_config: Dict[str, Any]) -> np.ndarray:
+        comp_background = np.zeros(size, dtype=np.float32)
+        if comp_type == 'flat':
+            intensity = float(comp_config.get('flat_intensity', 0.1))
+            comp_background.fill(intensity)
+        elif comp_type == 'gradient':
+            params = comp_config.get('gradient_params', {})
+            start = float(params.get('start_intensity', 0.0))
+            end = float(params.get('end_intensity', 0.2))
+            style = comp_config.get('gradient_style', 'linear')
+            if style == 'linear':
+                direction_deg = float(params.get('direction', 0.0))  # Angle in degrees
+                direction_rad = np.radians(direction_deg)
+                # Project coordinates onto the gradient direction vector
+                y_coords, x_coords = np.mgrid[0:height, 0:width]
+                # Center coords for rotation pivot? Or project from corner? Project from 0,0 is simpler.
+                proj_coords = x_coords * np.cos(direction_rad) + y_coords * np.sin(direction_rad)
+                # Normalize projected coords to roughly [0, 1] across the image dimension in that direction
+                max_proj = width * abs(np.cos(direction_rad)) + height * abs(np.sin(direction_rad))
+                norm_proj = proj_coords / max_proj if max_proj > 0 else np.zeros_like(proj_coords, dtype=float)  # Avoid division by zero if angle lines up poorly
+                comp_background = start + (end - start) * np.clip(norm_proj, 0.0, 1.0) # Linear interpolation
+            elif style == 'radial':
+                center_x_rel = float(params.get('center_x%', 0.5))
+                center_y_rel = float(params.get('center_y%', 0.5))
+                center_x = center_x_rel * width
+                center_y = center_y_rel * height
+                # Calculate distance of each pixel from the center
+                y_coords, x_coords = np.mgrid[0:height, 0:width]
+                distance = np.sqrt((x_coords - center_x)**2 + (y_coords - center_y)**2)
+                # Normalize distance (e.g., by max distance to corner, or half diagonal)
+                max_dist = np.sqrt((width/2.0)**2 + (height/2.0)**2)
+                norm_dist = distance / max_dist if max_dist > 0 else np.zeros_like(distance, dtype=float)
+                # Interpolate intensity based on normalized distance
+                comp_background = start + (end - start) * np.clip(norm_dist, 0.0, 1.0)
+            else:
+                print(f"Warning: Unknown gradient style '{style}'. Using flat average.")
+                comp_background.fill((start + end)/2)
+        elif comp_type == 'noise':
+            noise_amplitude = float(comp_config.get('noise_amplitude', 0.05))
+            noise_type = comp_config.get('noise_type', 'perlin')
+            noise_base = 0.0 # For component noise, base is often 0, add later
+            scale_param = float(comp_config.get('noise_frequency', 10.0))
+            scale = width / max(1.0, scale_param)
+            octaves = int(comp_config.get('noise_octaves', 4))
+            persistence = float(comp_config.get('noise_persistence', 0.5))
+            lacunarity = float(comp_config.get('noise_lacunarity', 2.0))
+            base_seed = rng.randint(0, 100000)
+            if noise_type in ['perlin', 'simplex']:
+                # Generate noise centered at 0 for easier combination [-amp/2, +amp/2] approx
+                noise_map = generate_procedural_noise_2d(
+                    shape=size, scale=scale, octaves=octaves, persistence=persistence,
+                    lacunarity=lacunarity, base_seed=base_seed, noise_type=noise_type,
+                    normalize_range=(-0.5, 0.5) # Range centered at 0
+                )
+                comp_background = noise_map * noise_amplitude # Scale centered noise
+            elif noise_type == 'gaussian':
+                 comp_background = np.random.normal(loc=0.0, scale=noise_amplitude, size=size)
+            else: # Fallback
+                comp_background.fill(0.0)
+        return comp_background.astype(np.float32)
+    # --- End Helper ---
+    
     if bg_type == 'flat':
-        intensity = float(config.get('flat_intensity', 0.1))
-        background.fill(intensity)
+        background = generate_component('flat', config)
     elif bg_type == 'gradient':
-        # config gradient params should already be floats/chosen style
-        params = config.get('gradient_params', {})
-        start = float(params.get('start_intensity', 0.0))
-        end = float(params.get('end_intensity', 0.2))
-        style = config.get('gradient_style', 'linear') # Style was already chosen
-        if style == 'linear':
-             y_coords = np.linspace(start, end, height)
-             background = np.tile(y_coords, (width, 1)).T
-        else: # radial etc. - TODO
-             print("Warning: Radial gradient background not fully implemented.")
-             background.fill((start + end)/2)
+        # Pass only gradient relevant parts of config
+        grad_conf = {'gradient_params': config.get('gradient_params'),
+                     'gradient_style': config.get('gradient_style')}
+        background = generate_component('gradient', grad_conf)
     elif bg_type == 'noise':
-        # Parameters should now be single values resolved by the randomizer
-        noise_amplitude = float(config.get('noise_amplitude', 0.05))
-        noise_type = config.get('noise_type', 'perlin')
-        # Get the already randomized base intensity
-        noise_base = float(config.get('noise_base_intensity', 0.05)) # float() call is okay now
-        scale_param = float(config.get('noise_frequency', 10.0)) # Use a different name if config uses 'freq'
-        scale = width / max(1.0, scale_param)
-        octaves = int(config.get('noise_octaves', 4))
-        persistence = float(config.get('noise_persistence', 0.5))
-        lacunarity = float(config.get('noise_lacunarity', 2.0))
-        base_seed = rng.randint(0, 100000)
-
-        print(f"Generating '{noise_type}' noise background (Amplitude: {noise_amplitude:.3f}, Base: {noise_base:.3f}, Scale: {scale:.1f})")
-
-        if noise_type in ['perlin', 'simplex']:
-            # Generate noise in range [0, 1]
-            noise_map = generate_procedural_noise_2d(
-                shape=size,
-                scale=scale,
-                octaves=octaves,
-                persistence=persistence,
-                lacunarity=lacunarity,
-                base_seed=base_seed,
-                noise_type=noise_type,
-                normalize_range=(0.0, 1.0) # Get noise scaled 0 to 1
-            )
-            # Apply amplitude relative to the base intensity (modulate around base)
-            background = noise_base + (noise_map - 0.5) * noise_amplitude * 2.0 # Center noise map at 0, scale by amp
-        elif noise_type == 'gaussian':
-            noise = np.random.normal(loc=0.0, scale=noise_amplitude, size=size)
-            background = noise_base + noise
-        else: # Fallback
-            print(f"Warning: Unknown background noise type '{noise_type}', using flat base.")
-            background.fill(noise_base)
-
-        # Clip the final noise background
-        np.clip(background, 0.0, 1.0, out=background)
+         # Pass only noise relevant parts of config
+         noise_conf = {k: v for k, v in config.items() if k.startswith('noise_')}
+         background = generate_component('noise', noise_conf)
+         # Add base intensity AFTER generating noise centered at 0
+         base_intensity = float(config.get('noise_base_intensity', 0.05))
+         background += base_intensity
 
     elif bg_type == 'composite':
-        # TODO: Implement composite background (e.g., blend gradient and noise)
-         print("Warning: Composite background not implemented. Using flat.")
-         background.fill(float(config.get('flat_intensity', 0.1)))
-         
-    else: # unknown
+        print("Generating composite background...")
+        # Define components and combination method (make configurable?)
+        comp1_type = config.get('composite_comp1_type', 'gradient') # e.g., gradient
+        comp2_type = config.get('composite_comp2_type', 'noise')    # e.g., noise
+        combine_mode = config.get('composite_combine_mode', 'add') # 'add', 'multiply', 'overlay'
+
+        # Generate component 1 (e.g., gradient)
+        # Need to extract relevant params, potentially prefixed in config
+        comp1_config = config.get('composite_comp1_params', {})
+        # If params aren't prefixed, pull from top level based on type
+        if not comp1_config:
+             if comp1_type == 'gradient': comp1_config = {'gradient_params': config.get('gradient_params'), 'gradient_style': config.get('gradient_style')}
+             elif comp1_type == 'noise': comp1_config = {k: v for k, v in config.items() if k.startswith('noise_')}
+             elif comp1_type == 'flat': comp1_config = {'flat_intensity': config.get('flat_intensity')}
+
+        component1 = generate_component(comp1_type, comp1_config)
+
+        # Generate component 2 (e.g., noise)
+        comp2_config = config.get('composite_comp2_params', {})
+        if not comp2_config:
+             if comp2_type == 'gradient': comp2_config = {'gradient_params': config.get('gradient_params'), 'gradient_style': config.get('gradient_style')}
+             elif comp2_type == 'noise': comp2_config = {k: v for k, v in config.items() if k.startswith('noise_')}
+             elif comp2_type == 'flat': comp2_config = {'flat_intensity': config.get('flat_intensity')}
+
+        component2 = generate_component(comp2_type, comp2_config)
+
+        # Combine components
+        print(f"Combining '{comp1_type}' and '{comp2_type}' using mode '{combine_mode}'")
+        if combine_mode == 'add':
+             # Add components, maybe add a base offset too?
+             base_intensity = float(config.get('composite_base_intensity', 0.05))
+             background = base_intensity + component1 + component2 # Add noise/gradient deviations to base
+        elif combine_mode == 'multiply':
+             # Often base * (1 + noise) * gradient_factor
+             # Assuming component1=gradient [0,1], component2=noise [-a/2, a/2]
+             base_intensity = float(config.get('composite_base_intensity', 0.1))
+             background = base_intensity * component1 * (1.0 + component2) # Example combination
+        # TODO: Implement other modes like 'overlay' if needed
+        else: # Default to add
+             print(f"Warning: Unknown composite combine mode '{combine_mode}'. Using 'add'.")
+             base_intensity = float(config.get('composite_base_intensity', 0.05))
+             background = base_intensity + component1 + component2
+
+        # Clip final composite background
+        np.clip(background, 0.0, 1.0, out=background)
+
+    else: # Unknown type
         print(f"Warning: Unknown background type '{bg_type}', using flat default.")
         background.fill(0.1)
 
@@ -260,8 +328,6 @@ def generate_metadata_overlay(overlay_config: Dict[str, Any], global_config: Dic
 
 
     return meta_overlay
-
-
 
 def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: str, master_seed: int) -> GeneratedSample:
     """
@@ -658,6 +724,18 @@ def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: 
                     params_with_type['artifact_type'] = artifact_type # Consistency? Or just pass params.
                     # create_artifact expects {'type': ..., 'parameters': ...} structure from raffle output
                     instance = create_artifact(effect_info) # Pass the original effect_info dict
+                    
+                # --- Prepare kwargs for apply method ---
+                apply_kwargs = {}
+                if isinstance(instance, (AffineTransform, ElasticMeshDeform)):
+                     apply_kwargs['masks'] = current_actual_masks
+                elif isinstance(instance, TopographicShading): # Check specifically for TopoShading
+                     # Pass cumulative masks if derived source is possible
+                     if instance.get_param('height_map_source') == 'derived':
+                          apply_kwargs['cumulative_masks'] = sample.cumulative_masks
+                     # Pass RNG if perlin source is possible
+                     if instance.get_param('height_map_source') == 'random_perlin':
+                           apply_kwargs['rng'] = rng # Pass the sample's RNG
 
                 # Apply based on type
                 if isinstance(instance, (AffineTransform, ElasticMeshDeform)): # Geometric warps
@@ -687,7 +765,7 @@ def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: 
                     # print(f"DEBUG: Applying intensity/noise effect '{artifact_type}'...")
                     # These return only the image, assignment is correct
                     # Ensure the instance.apply method ONLY returns the image ndarray
-                    result = instance.apply(final_image)
+                    result = instance.apply(final_image, **apply_kwargs)
                     if isinstance(result, tuple):
                          print(f"ERROR: Intensity/Noise artifact '{artifact_type}' unexpectedly returned a tuple!")
                          # Handle error appropriately, maybe take first element?

@@ -25,7 +25,12 @@
     "noise_base_intensity": [0.0, 0.2],
     "noise_octaves": [2, 6],
     "noise_persistence": [0.4, 0.6],
-    "noise_lacunarity": [1.8, 2.5]
+    "noise_lacunarity": [1.8, 2.5],
+	
+	"composite_comp1_type": ["gradient", "flat"],
+    "composite_comp2_type": ["noise"],
+    "composite_combine_mode": ["add", "multiply"],
+    "composite_base_intensity": [0.0, 0.15]
   },
 
   "layering": {
@@ -106,7 +111,7 @@
         "enabled": true, "layer_name": "Scattered E and T Mix",
         "shape_type": ["e", "t"], 
         "pattern": { "type": "random_scatter" }, "num_shapes": [15, 50],
-        "shape_params": { "width": [15, 45], "height": [15, 45], "bar_thickness": [2, 5], "intensity": [0.5, 0.9], "rotation": [0, 360] },
+        "shape_params": { "width": [150, 450], "height": [150, 450], "bar_thickness": [2, 5], "intensity": [0.5, 0.9], "rotation": [0, 360] },
         "alpha": [0.8, 1.0], "composition_mode": ["additive", "overwrite"]
       },
       {
@@ -208,7 +213,7 @@
            "probe_psf": { "enabled": true, "probability": 0.9, "parameter_ranges": {"sigma_x": [0.4, 2.8], "sigma_y": [0.4, 2.8], "astig_angle": [-60, 60]}}, 
            "charging": { "enabled": true, "probability": 0.55, "parameter_ranges": {"halo_intensity": [0.03, 0.3], "halo_radius": [5, 60], "streak_probability": 0.7, "streak_length": [30, 250], "streak_direction": [0, 360]}}, 
            "defocus_blur": {"enabled": true, "probability": 0.5, "parameter_ranges": {"focal_plane": [0.0, 1.0], "max_radius": [0.5, 7.0], "gradient_axis": ["vertical", "horizontal", "radial"] }}, 
-           "topographic_shading": {"enabled": true, "probability": 0.3, "parameter_ranges": {"height_contrast": [0.1, 0.5], "slope_angle": [0, 360], "height_map_source": ["random_perlin", "derived"]}} 
+           "topographic_shading": {"enabled": true, "probability": 0.4, "parameter_ranges": {"height_contrast": [0.1, 0.6], "slope_angle": [0, 360], "height_map_source": ["random_perlin", "derived"], "perlin_frequency": [1.0, 8.0], "perlin_octaves": [2, 5], "perlin_persistence": [0.4, 0.6], "perlin_lacunarity": [1.9, 2.5]}} 
        }
     },
     "noise": {
