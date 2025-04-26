@@ -1117,6 +1117,7 @@ def save_sample(sample: GeneratedSample, config: Dict[str, Any], main_dir: str, 
     # Save specific config for this sample
     cfg_fname = "configuration.json"
     cfg_fpath = os.path.join(sub_dir, cfg_fname)
+    logger.debug(f"Saving sample configuration to '{cfg_fpath}'")
     save_metadata(config, cfg_fpath) # Save the sample-specific config used
     paths['configuration'] = os.path.join(sample_subdir_name, cfg_fname)
 
@@ -1189,25 +1190,38 @@ def save_sample(sample: GeneratedSample, config: Dict[str, Any], main_dir: str, 
     sample.output_paths = paths
     sample.metadata['output_files'] = paths # Ensure metadata reflects final paths
     
+# --- Add helper function (can be in pipeline.py or utils.py) ---
 def calculate_hashes(output_paths: Dict[str, str], base_dir: str, algo: str = 'sha256') -> Dict[str, str]:
     """Calculates hashes for files listed in output_paths."""
     hashes = {}
-    for key, rel_path in output_paths.items():
-        # Skip metadata/hash file itself? Or include? Including for now.
-        # if key in ['metadata', 'hashes', 'configuration', 'seed_file']: continue
+    logger = logging.getLogger() # Get root logger or pass specific logger if needed
+    logger.info(f"Calculating {algo} hashes...")
+
+    items_to_hash = list(output_paths.items()) # Create list to iterate over potentially changing dict keys
+    for key, rel_path in items_to_hash:
+        # Skip non-file entries or metadata files themselves?
+        if key in ['hashes', 'metadata', 'configuration', 'log_file', 'seed_file']: # Example skip list
+            logger.debug(f"Skipping hash calculation for: {key}")
+            continue
+
         full_path = os.path.join(base_dir, rel_path)
         if os.path.isfile(full_path):
             try:
+                 logger.debug(f"Hashing file: {rel_path}")
                  hasher = hashlib.new(algo)
                  with open(full_path, 'rb') as f:
                       while True:
-                           chunk = f.read(4096) # Read in chunks
+                           chunk = f.read(65536) # Read in 64k chunks
                            if not chunk: break
                            hasher.update(chunk)
-                 hashes[rel_path] = hasher.hexdigest()
+                 file_hash = hasher.hexdigest()
+                 hashes[rel_path] = file_hash # Store hash keyed by relative path
+                 logger.debug(f"  -> Hash: {file_hash[:8]}...")
             except Exception as e:
-                 print(f"Warning: Could not calculate hash for {rel_path}: {e}")
+                 logger.warning(f"Could not calculate hash for {rel_path}: {e}")
                  hashes[rel_path] = f"Error: {e}"
         else:
+             logger.warning(f"File not found for hashing: {full_path} (rel: {rel_path})")
              hashes[rel_path] = "File not found or not a file"
+    logger.info("Hash calculation finished.")
     return hashes

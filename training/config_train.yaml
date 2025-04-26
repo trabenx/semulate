@@ -1,0 +1,69 @@
+# Training Configuration
+seed: 42
+
+# --- Data ---
+data:
+  # Path to the DIRECTORY containing the sample subdirectories (e.g., ./output_rich_random/)
+  synthetic_data_dir: "../output_even_richer_random" # Adjust path relative to main_train.py
+  # Optional: Path to a directory with real SEM data (if available) following similar structure
+  # real_data_dir: "../real_sem_data"
+  mask_type: "instance_mask"      # Which mask to use as target ('instance_mask', 'combined_actual_mask')
+  train_split: 0.8                # Fraction for training set
+  val_split: 0.1                  # Fraction for validation set (rest is test)
+  num_workers: 4                  # Dataloader workers
+  ignore_border_pixels: 20        # Pixels to ignore around the border during loss calculation
+
+# --- Model ---
+model:
+  arch: "unet"                    # Model architecture (e.g., from segmentation-models-pytorch)
+  encoder_name: "resnet34"        # Backbone encoder for U-Net
+  encoder_weights: "imagenet"     # Pretrained weights ('imagenet' or None)
+  in_channels: 1                  # Grayscale input
+  # Number of output classes depends on mask_type:
+  # - 1 for binary segmentation (combined_actual_mask) + sigmoid activation
+  # - num_instances + 1 for instance (hard to know max instances) -> often handled differently
+  # - num_semantic_classes + 1 (if different layers = different classes)
+  # Let's assume binary segmentation (foreground/background) for combined_actual_mask initially
+  # Or modify dataset to output instance targets for instance segmentation models
+  classes: 1                      # Output channels (1 for binary: foreground vs background)
+
+# --- Training ---
+training:
+  device: "cuda"                  # "cuda" or "cpu"
+  epochs: 50
+  batch_size: 8
+  loss: "dice_bce"                # Loss function ('dice', 'bce', 'dice_bce', 'iou', 'focal')
+  optimizer: "adamw"              # Optimizer ('adam', 'adamw', 'sgd')
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  lr_scheduler: "cosine"          # Learning rate scheduler ('step', 'cosine', 'reduce_lr_on_plateau', None)
+  lr_scheduler_params:            # Params specific to scheduler
+    T_max: 50                     # For CosineAnnealingLR
+    # step_size: 10               # For StepLR
+    # patience: 5                 # For ReduceLROnPlateau
+  gradient_clipping: 1.0          # Max grad norm (0 to disable)
+  mixed_precision: true           # Use AMP (Automatic Mixed Precision)
+
+# --- Augmentation ---
+augmentation:
+  # Input size needs to be handled carefully for varying sizes
+  # Option 1: Resize all inputs to a fixed size
+  # resize_height: 512
+  # resize_width: 512
+  # Option 2: Use padding/cropping or models supporting variable input (harder)
+  # Let's start with resizing for simplicity
+  resize_height: 512
+  resize_width: 512
+  # Albumentations examples
+  horizontal_flip_prob: 0.5
+  vertical_flip_prob: 0.5
+  random_brightness_contrast_prob: 0.3
+  gaussian_blur_prob: 0.2
+  # Add more relevant augmentations (affine, elastic are already in generator)
+
+# --- Logging & Saving ---
+logging:
+  log_dir: "../training_logs"     # Directory for TensorBoard logs
+  checkpoint_dir: "../trained_models" # Directory to save model checkpoints
+  save_freq: 5                    # Save checkpoint every N epochs
+  val_freq: 1                     # Validate every N epochs
