@@ -15,7 +15,8 @@ from .artifacts import (create_artifact, AffineTransform, ElasticMeshDeform, Top
 from .noise import create_noise
 from .utils import (generate_procedural_noise_2d, save_gif, visualize_warp_field,
                    save_image, save_metadata, save_text, ensure_dir_exists,
-                   generate_cumulative_mask, combine_masks, scale_to_uint)
+                   generate_cumulative_mask, combine_masks, scale_to_uint,
+                   DISTINCT_COLORS_BGR)
 from .artifacts.shape_level import EdgeRipple, BreaksHoles
 
 # Potentially import background generation functions if they become complex
@@ -714,6 +715,32 @@ def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: 
     original_masks_list = sample.get_original_masks()
     sample.combined_actual_mask = combine_masks(actual_masks_list)
     sample.combined_original_mask = combine_masks(original_masks_list)
+    
+    # --- Generate Combined VISUAL Masks (Colorized) ---
+    height, width = size
+    combined_actual_mask_vis = np.zeros((height, width, 3), dtype=np.uint8) # BGR output
+    combined_original_mask_vis = np.zeros((height, width, 3), dtype=np.uint8)
+
+    logger.debug("Saving cumulative masks...")
+    num_colors = len(DISTINCT_COLORS_BGR)
+
+    for i, actual_mask in enumerate(actual_masks_list):
+        if actual_mask is not None:
+            color = DISTINCT_COLORS_BGR[i % num_colors]
+            combined_actual_mask_vis[actual_mask > 0] = color # Assign color, later layers overwrite
+
+    for i, original_mask in enumerate(original_masks_list):
+        if original_mask is not None:
+            color = DISTINCT_COLORS_BGR[i % num_colors]
+            combined_original_mask_vis[original_mask > 0] = color
+
+    # Store these colorized versions if needed directly, or generate in save_sample
+    # Let's store them in the sample object for now
+    sample.combined_actual_mask_vis = combined_actual_mask_vis
+    sample.combined_original_mask_vis = combined_original_mask_vis
+
+    # --- Generate Cumulative Masks (Binary DATA only needed) ---
+    # The cumulative VISUAL masks are generated on-the-fly for the GIF
     sample.cumulative_masks = generate_cumulative_mask(actual_masks_list)
 
     # --- Instance Mask Implementation ---
@@ -900,7 +927,7 @@ def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: 
 
     # --- 9. Save Outputs ---
     logger.info("Saving output files...")
-    save_sample(sample, config, main_file_output_dir, subdir_output_path, file_suffix, logger) # Pass config to know what to save and bit depth
+    save_sample(sample, config, main_file_output_dir, subdir_output_path, file_suffix, logger, size) # Pass config to know what to save and bit depth
 
     # --- 10. Finalize ---
     end_time = time.time()
@@ -940,23 +967,27 @@ def generate_sample(config: Dict[str, Any], sample_index: int, base_output_dir: 
     return sample
 
 
-def save_sample(sample: GeneratedSample, config: Dict[str, Any], main_dir: str, sub_dir: str, file_suffix: str, logger: logging.Logger):
+def save_sample(sample: GeneratedSample, config: Dict[str, Any], main_dir: str, sub_dir: str, file_suffix: str, logger: logging.Logger, size: Tuple[int, int]):
     """
     Saves the generated sample data to disk using the revised structure:
     - Main images/meta in main_dir (with suffix)
     - Details like masks, logs, configs in sub_dir (named sem_xxxxx)
     """
-    logger.debug(f"Saving sample data. Main dir: '{main_dir}', Sub dir: '{sub_dir}'")
+    logger.debug(f"Saving sample data. Main dir: '{main_dir}', Sub dir: '{sub_dir}', Size: {size}")
     # Define specific subdirectories within the sample's subdir
     layers_base_dir = os.path.join(sub_dir, "layers")
     layers_combined_dir = os.path.join(sub_dir, "layers_combined")
+    masks_vis_dir = os.path.join(sub_dir, "masks_vis") # Directory for visual masks
+
     logs_dir = os.path.join(sub_dir, "logs")
     ensure_dir_exists(layers_base_dir)
     ensure_dir_exists(layers_combined_dir)
+    ensure_dir_exists(masks_vis_dir) # Ensure vis dir exists
     ensure_dir_exists(logs_dir) # Create only if saving logs
 
     # Dictionary to store relative paths (from main_dir) for metadata
     paths = {}
+    height, width = size # <<< Define height and width here <<<
     sample_subdir_name = os.path.basename(sub_dir) # e.g., "sem_00001"
 
     # --- Get Output Options ---
@@ -1021,15 +1052,19 @@ def save_sample(sample: GeneratedSample, config: Dict[str, Any], main_dir: str, 
 
     if sample.combined_original_mask is not None:
         if save_optional_npy: save_npy(sample.combined_original_mask.astype(np.uint8), os.path.join(sub_dir, "combined_original_mask.npy"))
-        save_image(make_mask_visible(sample.combined_original_mask), os.path.join(sub_dir, f"combined_original_mask_vis.{mask_format_vis}"))
-        paths['combined_original_mask'] = os.path.join(sample_subdir_name, "combined_original_mask.npy") # Point to data
-        paths['combined_original_mask_vis'] = os.path.join(sample_subdir_name, f"combined_original_mask_vis.{mask_format_vis}")
+        # Save the pre-generated color visual mask
+        if sample.combined_original_mask_vis is not None:
+             save_image(sample.combined_original_mask_vis, os.path.join(sub_dir, f"combined_original_mask_vis.{mask_format_vis}"))
+             paths['combined_original_mask_vis'] = os.path.join(sample_subdir_name, f"combined_original_mask_vis.{mask_format_vis}")
+        paths['combined_original_mask'] = os.path.join(sample_subdir_name, "combined_original_mask.npy")
 
     if sample.combined_actual_mask is not None:
         if save_optional_npy: save_npy(sample.combined_actual_mask.astype(np.uint8), os.path.join(sub_dir, "combined_actual_mask.npy"))
-        save_image(make_mask_visible(sample.combined_actual_mask), os.path.join(sub_dir, f"combined_actual_mask_vis.{mask_format_vis}"))
+        # Save the pre-generated color visual mask
+        if sample.combined_actual_mask_vis is not None:
+             save_image(sample.combined_actual_mask_vis, os.path.join(sub_dir, f"combined_actual_mask_vis.{mask_format_vis}"))
+             paths['combined_actual_mask_vis'] = os.path.join(sample_subdir_name, f"combined_actual_mask_vis.{mask_format_vis}")
         paths['combined_actual_mask'] = os.path.join(sample_subdir_name, "combined_actual_mask.npy")
-        paths['combined_actual_mask_vis'] = os.path.join(sample_subdir_name, f"combined_actual_mask_vis.{mask_format_vis}")
 
     if sample.instance_mask is not None and output_opts.get('generate_instance_masks', False):
         # Save data mask (TIF recommended for uint16)
@@ -1093,27 +1128,7 @@ def save_sample(sample: GeneratedSample, config: Dict[str, Any], main_dir: str, 
              logger.error(f"Error generating/saving warp field visualization: {e}")
              import traceback
              logger.error(traceback.format_exc())
-         
-    if save_gifs:
-        print("DEBUG save_sample: Generating and saving GIFs...")
-        # GIF for Actual Masks Build-up
-        actual_mask_frames = [make_mask_visible(m) for m in sample.cumulative_masks if m is not None]
-        if actual_mask_frames:
-            gif_fname = "layers_actual_masks.gif"
-            gif_fpath = os.path.join(layers_combined_dir, gif_fname)
-            save_gif(actual_mask_frames, gif_fpath, fps=2) # Slow FPS for layers
-            paths['layers_actual_masks_gif'] = os.path.join(sample_subdir_name, "layers_combined", gif_fname)
 
-        # GIF for Original Masks Build-up (Requires generating cumulative original masks)
-        # TODO: Generate cumulative original masks in pipeline if this GIF is desired
-        # original_mask_frames = [make_mask_visible(m) for m in sample.cumulative_original_masks if m is not None]
-        # if original_mask_frames:
-        #    gif_fname = "layers_original_masks.gif"
-        #    # ... save gif ...
-        #    paths['layers_original_masks_gif'] = ...
-        else:
-            print("DEBUG save_sample: Cumulative original masks not available for GIF.")
-         
     # Save specific config for this sample
     cfg_fname = "configuration.json"
     cfg_fpath = os.path.join(sub_dir, cfg_fname)
@@ -1133,36 +1148,107 @@ def save_sample(sample: GeneratedSample, config: Dict[str, Any], main_dir: str, 
         paths['background_data'] = os.path.join(sample_subdir_name, "layers_combined", "background.npy")
         paths['background_vis'] = os.path.join(sample_subdir_name, "layers_combined", f"background_vis.{img_format_vis}")
 
-    for i, cum_mask in enumerate(sample.cumulative_masks):
-         if cum_mask is not None:
-            if save_optional_npy: save_npy(cum_mask.astype(np.uint8), os.path.join(layers_combined_dir, f"cumulative_actual_mask_{i:02d}.npy"))
-            save_image(make_mask_visible(cum_mask), os.path.join(layers_combined_dir, f"cumulative_actual_mask_{i:02d}_vis.{mask_format_vis}"))
-            paths[f'cumulative_actual_mask_{i:02d}'] = os.path.join(sample_subdir_name, "layers_combined", f"cumulative_actual_mask_{i:02d}.npy")
-            paths[f'cumulative_actual_mask_{i:02d}_vis'] = os.path.join(sample_subdir_name, "layers_combined", f"cumulative_actual_mask_{i:02d}_vis.{mask_format_vis}")
+
+    # Create a black canvas for the cumulative visual mask
+    cumulative_vis_mask = np.zeros((sample.background.shape[0], sample.background.shape[1], 3), dtype=np.uint8) # Need shape from sample
+    # --- Get the list of actual layer masks HERE ---
+    actual_masks_list = sample.get_actual_masks() # Retrieve from sample object
+    num_colors = len(DISTINCT_COLORS_BGR)
+    for i, cum_mask_data in enumerate(sample.cumulative_masks):
+         if cum_mask_data is not None:
+            # Save Data Mask
+            if save_optional_npy:
+                 fname_data = f"cumulative_actual_mask_{i:02d}.npy"
+                 fpath_data = os.path.join(layers_combined_dir, fname_data)
+                 logger.debug(f"Saving cumulative mask {i} DATA to '{fpath_data}'")
+                 save_npy(cum_mask_data.astype(np.uint8), fpath_data)
+                 paths[f'cumulative_actual_mask_{i:02d}'] = os.path.join(sample_subdir_name, "layers_combined", fname_data)
+
+            # Generate and Save Visual Mask for this cumulative step
+            # Add the current layer's color to the cumulative visual mask
+            # Check if the index 'i' is valid for the actual_masks_list
+            if i < len(actual_masks_list) and actual_masks_list[i] is not None:
+                color = DISTINCT_COLORS_BGR[i % num_colors]
+                # Add current layer's color ON TOP of previous state
+                cumulative_vis_mask[actual_masks_list[i] > 0] = color
+            else:
+                 logger.warning(f"Index {i} out of bounds or None mask in actual_masks_list while generating cumulative vis mask.")
+
+            # Save the current state of the cumulative visual mask
+            fname_vis = f"cumulative_actual_mask_{i:02d}_vis.{mask_format_vis}"
+            fpath_vis = os.path.join(layers_combined_dir, fname_vis)
+            logger.debug(f"Saving cumulative mask {i} VIS to '{fpath_vis}'")
+            save_image(cumulative_vis_mask.copy(), fpath_vis) # Save copy at each step
+            paths[f'cumulative_actual_mask_{i:02d}_vis'] = os.path.join(sample_subdir_name, "layers_combined", fname_vis)
+            
+    # --- Generate and Save GIFs (using colored layers) ---
+    if output_opts.get('save_gifs', False):
+        logger.info("Generating and saving COLORIZED GIFs...")
+        # GIF for Actual Masks Build-up
+        actual_mask_frames_color = []
+        cumulative_vis_mask_gif = np.zeros((sample.background.shape[0], sample.background.shape[1], 3), dtype=np.uint8)
+        for i, actual_mask in enumerate(actual_masks_list):
+             if actual_mask is not None:
+                 color = DISTINCT_COLORS_BGR[i % num_colors]
+                 cumulative_vis_mask_gif[actual_mask > 0] = color
+                 actual_mask_frames_color.append(cumulative_vis_mask_gif.copy()) # Add frame
+
+        logger.debug(f"Number of frames for actual_masks_color.gif: {len(actual_mask_frames_color)}")
+        if actual_mask_frames_color:
+            gif_fname = "layers_actual_masks_color.gif" # New name
+            gif_fpath = os.path.join(layers_combined_dir, gif_fname)
+            save_gif(actual_mask_frames_color, gif_fpath, fps=2)
+            paths['layers_actual_masks_gif'] = os.path.join(sample_subdir_name, "layers_combined", gif_fname)
+        else:
+             logger.warning("No valid frames found for actual_masks_color.gif.")
+
+        # GIF for Original Masks Build-up
+        original_mask_frames_color = []
+        cumulative_vis_mask_orig_gif = np.zeros((sample.background.shape[0], sample.background.shape[1], 3), dtype=np.uint8)
+        original_masks_list = sample.get_original_masks() # Get original masks
+        for i, original_mask in enumerate(original_masks_list):
+             if original_mask is not None:
+                 color = DISTINCT_COLORS_BGR[i % num_colors]
+                 cumulative_vis_mask_orig_gif[original_mask > 0] = color
+                 original_mask_frames_color.append(cumulative_vis_mask_orig_gif.copy())
+
+        logger.debug(f"Number of frames for original_masks_color.gif: {len(original_mask_frames_color)}")
+        if original_mask_frames_color:
+            gif_fname = "layers_original_masks_color.gif" # New name
+            gif_fpath = os.path.join(layers_combined_dir, gif_fname)
+            save_gif(original_mask_frames_color, gif_fpath, fps=2)
+            paths['layers_original_masks_gif'] = os.path.join(sample_subdir_name, "layers_combined", gif_fname)
+        else:
+            logger.warning("No valid frames found for original_masks_color.gif.")
     
     #   --- /layers/layer_xx/ Subdirs ---
     for i, (orig_mask, actual_mask) in enumerate(sample.layer_masks):
         layer_xx_dir = os.path.join(layers_base_dir, f"layer_{i:02d}")
         ensure_dir_exists(layer_xx_dir)
         layer_rel_path = os.path.join("layers", f"layer_{i:02d}") # Relative path for metadata
+        color = DISTINCT_COLORS_BGR[i % num_colors] # Get color for this layer
+
 
         if orig_mask is not None:
             if save_optional_npy: save_npy(orig_mask.astype(np.uint8), os.path.join(layer_xx_dir, "original_mask.npy"))
-            save_image(make_mask_visible(orig_mask), os.path.join(layer_xx_dir, f"original_mask_vis.{mask_format_vis}"))
+            # Create colored visual mask
+            orig_vis_mask = np.zeros((height, width, 3), dtype=np.uint8)
+            orig_vis_mask[orig_mask > 0] = color
+            save_image(orig_vis_mask, os.path.join(layer_xx_dir, f"original_mask_vis.{mask_format_vis}")) # Save color version
             paths[f'layer_{i:02d}_original_mask'] = os.path.join(sample_subdir_name, layer_rel_path, "original_mask.npy")
             paths[f'layer_{i:02d}_original_mask_vis'] = os.path.join(sample_subdir_name, layer_rel_path, f"original_mask_vis.{mask_format_vis}")
-            # Optional original render
-            # if save_per_layer_renders and corresponding data exists in sample: save here...
+            # ... (Optional original render save) ...
 
         if actual_mask is not None:
              if save_optional_npy: save_npy(actual_mask.astype(np.uint8), os.path.join(layer_xx_dir, "actual_mask.npy"))
-             save_image(make_mask_visible(actual_mask), os.path.join(layer_xx_dir, f"actual_mask_vis.{mask_format_vis}"))
+             # Create colored visual mask
+             actual_vis_mask = np.zeros((height, width, 3), dtype=np.uint8)
+             actual_vis_mask[actual_mask > 0] = color
+             save_image(actual_vis_mask, os.path.join(layer_xx_dir, f"actual_mask_vis.{mask_format_vis}")) # Save color version
              paths[f'layer_{i:02d}_actual_mask'] = os.path.join(sample_subdir_name, layer_rel_path, "actual_mask.npy")
              paths[f'layer_{i:02d}_actual_mask_vis'] = os.path.join(sample_subdir_name, layer_rel_path, f"actual_mask_vis.{mask_format_vis}")
-             # Optional actual render
-             # if save_per_layer_renders and corresponding data exists in sample: save here...
-             # Optional defect mask
-             # if output_opts.get('save_defect_mask', False) and orig_mask is not None: calculate and save XOR mask here...
+             # ... (Optional actual render save) ...
+             # ... (Optional defect mask save) ...
 
     # --- Update paths dict in sample object ---
     # This will be saved again when runtime is added to metadata

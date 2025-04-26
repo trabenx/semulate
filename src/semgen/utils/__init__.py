@@ -2,7 +2,7 @@ from .io_utils import save_image, save_metadata, save_text, save_gif, ensure_dir
 from .mask_utils import generate_cumulative_mask, combine_masks
 #from .image_utils import scale_to_uint
 from .noise_utils import generate_procedural_noise_2d
-from .vis_utils import visualize_warp_field
+from .vis_utils import visualize_warp_field, DISTINCT_COLORS_BGR
 
 
 __all__ = [
@@ -15,5 +15,6 @@ __all__ = [
     "scale_to_uint",
     "generate_procedural_noise_2d",
     "save_gif",
-    "visualize_warp_field"
+    "visualize_warp_field",
+    "DISTINCT_COLORS_BGR"
 ]

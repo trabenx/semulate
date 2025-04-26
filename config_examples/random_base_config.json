@@ -23,7 +23,7 @@
     "noise_amplitude": [0.01, 0.15],
     "noise_frequency": [0.5, 15.0],
     "noise_base_intensity": [0.0, 0.2],
-    "noise_octaves": [2, 6],
+    "noise_octaves": [2, 4],
     "noise_persistence": [0.4, 0.6],
     "noise_lacunarity": [1.8, 2.5],
 	
@@ -34,7 +34,7 @@
   },
 
   "layering": {
-    "num_layers": [1, 3], 
+    "num_layers": [3, 7], 
     "layer_order": ["sequential", "random"],
     "layers": [ 
       {
@@ -111,7 +111,7 @@
         "enabled": true, "layer_name": "Scattered E and T Mix",
         "shape_type": ["e", "t"], 
         "pattern": { "type": "random_scatter" }, "num_shapes": [15, 50],
-        "shape_params": { "width": [150, 450], "height": [150, 450], "bar_thickness": [2, 5], "intensity": [0.5, 0.9], "rotation": [0, 360] },
+        "shape_params": { "width": [50, 85], "height": [50, 85], "bar_thickness": [2, 5], "intensity": [0.5, 0.9], "rotation": [0, 360] },
         "alpha": [0.8, 1.0], "composition_mode": ["additive", "overwrite"]
       },
       {
@@ -170,7 +170,7 @@
         "alpha": 1.0, "composition_mode": "additive"
       },
       {
-        "enabled": true, "layer_name": "Scattered Wavy Lines",
+        "enabled": false, "layer_name": "Scattered Wavy Lines",
         "shape_type": "line",
         "pattern": { "type": "random_scatter" }, "num_shapes": [5, 15], 
         "shape_params": {
@@ -244,11 +244,11 @@
     "save_hashes": true,
     "save_logs": true,
     "output_formats": {
-        "image_final": "tif",
+        "image_final": "png",
         "image_vis": "png",
         "masks_data": "npy",
         "masks_vis": "png",
-        "instance_mask_data": "tif",
+        "instance_mask_data": "png",
         "instance_mask_vis": "png",
         "noise_map_vis": "png",
         "warp_field_vis": "png",

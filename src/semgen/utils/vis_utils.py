@@ -3,6 +3,20 @@ from typing import Optional
 import numpy as np
 import cv2 # Need OpenCV for color space conversion
 
+DISTINCT_COLORS_BGR = [
+    (255, 0, 0),     # Blue
+    (0, 255, 0),     # Green
+    (0, 0, 255),     # Red
+    (255, 255, 0),   # Cyan
+    (255, 0, 255),   # Magenta
+    (0, 255, 255),   # Yellow
+    (255, 128, 0),   # Orange-ish Blue
+    (128, 0, 255),   # Purple
+    (0, 255, 128),   # Teal-ish Green
+    (128, 128, 128), # Gray
+    (255, 255, 255)  # White (use last or avoid if bg is white)
+]
+
 def visualize_warp_field(
     warp_field: np.ndarray,
     max_expected_disp: Optional[float] = None,

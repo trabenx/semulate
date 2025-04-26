@@ -75,23 +75,22 @@ class ElasticMeshDeform(BaseArtifact):
         map_y = all_y.astype(np.float32) + map_dy
 
         # Apply the remapping
-        interpolation_img = cv2.INTER_LINEAR if np.issubdtype(image_data.dtype, np.floating) else cv2.INTER_CUBIC
+        interpolation_img = cv2.INTER_NEAREST if np.issubdtype(image_data.dtype, np.integer) else (cv2.INTER_LINEAR if np.issubdtype(image_data.dtype, np.floating) else cv2.INTER_CUBIC) # Choose based on input type
         interpolation_mask = cv2.INTER_NEAREST
         border_mode = cv2.BORDER_REFLECT_101 # Or other appropriate mode
 
         warped_image = cv2.remap(image_data, map_x, map_y,
-                                 interpolation=interpolation_img,
-                                 borderMode=border_mode)
+                         interpolation=interpolation_img, # Use determined interpolation
+                         borderMode=cv2.BORDER_CONSTANT, borderValue=0) # Use 0 border for masks
 
-        warped_masks = []
+        warped_masks = [] # Also apply to masks in kwargs
+        interpolation_mask = cv2.INTER_NEAREST # Always nearest for masks list
         for mask in masks:
-            if mask is not None:
-                warped_mask = cv2.remap(mask, map_x, map_y,
-                                        interpolation=interpolation_mask,
-                                        borderMode=cv2.BORDER_CONSTANT,
-                                        borderValue=0)
-                warped_masks.append(warped_mask)
-            else:
-                warped_masks.append(None)
-
+             if mask is not None:
+                 warped_mask = cv2.remap(mask, map_x, map_y,
+                                         interpolation=interpolation_mask, # Explicitly nearest
+                                         borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+                 warped_masks.append(warped_mask)
+     # ...
+        # Ensure returned warped_mask_list contains correctly interpolated masks
         return warped_image, warped_masks, warp_field_dx_dy

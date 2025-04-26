@@ -50,27 +50,34 @@ class AffineTransform(BaseArtifact):
 
         # Apply the transformation
         # Use INTER_LINEAR for image, INTER_NEAREST for masks
-        interpolation_img = cv2.INTER_LINEAR if np.issubdtype(image_data.dtype, np.floating) else cv2.INTER_CUBIC
-        interpolation_mask = cv2.INTER_NEAREST
+        if np.issubdtype(image_data.dtype, np.integer):
+             interp_img = cv2.INTER_NEAREST # Use NEAREST for integer/label images
+             border_mode_img = cv2.BORDER_CONSTANT
+             border_val_img = 0
+        else: # Floating point image data
+             interp_img = cv2.INTER_LINEAR # Or INTER_CUBIC
+             border_mode_img = cv2.BORDER_REFLECT_101 # Reflect often better for grayscale
+             border_val_img = 0 # Not used for reflect
 
-        # Determine border mode and value based on image background if possible
-        # Using reflect_101 is often reasonable for SEM backgrounds
-        border_mode = cv2.BORDER_REFLECT_101
-        # border_value = # determine from background, or use 0
+        # Always use NEAREST for masks in the list
+        interp_mask = cv2.INTER_NEAREST
+        border_mode_mask = cv2.BORDER_CONSTANT
+        border_val_mask = 0
 
         warped_image = cv2.warpAffine(image_data, M_combined, (cols, rows),
-                                      flags=interpolation_img,
-                                      borderMode=border_mode) # Add borderValue if needed
+                                      flags=interp_img,
+                                      borderMode=border_mode_img,
+                                      borderValue=border_val_img)
 
         warped_masks = []
         for mask in masks:
             if mask is not None:
                  warped_mask = cv2.warpAffine(mask, M_combined, (cols, rows),
-                                             flags=interpolation_mask,
-                                             borderMode=cv2.BORDER_CONSTANT, # Use 0 for mask borders
-                                             borderValue=0)
+                                             flags=interp_mask,
+                                             borderMode=border_mode_mask,
+                                             borderValue=border_val_mask)
                  warped_masks.append(warped_mask)
             else:
-                 warped_masks.append(None) # Propagate None masks if present
+                 warped_masks.append(None)
 
         return warped_image, warped_masks
