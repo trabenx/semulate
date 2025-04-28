@@ -51,10 +51,8 @@ def evaluate(model, dataloader, criterion, device, num_classes):
     
     # --- Initialize metrics for MULTICLASS ---
     # Remove threshold argument, it's handled internally via argmax for multiclass
-    dice_metric = smp_metrics.f1_score(num_classes=num_classes if num_classes > 1 else None, # Specify num_classes if > 1 for clarity? SMP might infer. Let's rely on inference for now.
-                                       ignore_index=None).to(device) # Can ignore background index if needed
-    iou_metric = smp_metrics.iou_score(num_classes=num_classes if num_classes > 1 else None,
-                                       ignore_index=None).to(device)
+    dice_metric = smp_metrics.f1_score(ignore_index=None).to(device)
+    iou_metric = smp_metrics.iou_score(ignore_index=None).to(device)
     # --- End Metric Initialization Change ---
 
     pbar = tqdm(dataloader, desc="Validation", leave=False)
@@ -84,12 +82,16 @@ def evaluate(model, dataloader, criterion, device, num_classes):
     final_iou_per_class = iou_metric.compute()   # Returns tensor (C,)
 
     # Calculate mean metrics (e.g., excluding background class 0)
-    if num_classes > 1:
-        mean_dice = torch.mean(final_dice_per_class[1:]).item() # Avg Dice over foreground classes
-        mean_iou = torch.mean(final_iou_per_class[1:]).item()   # Avg IoU over foreground classes
-    else: # Binary case (num_classes should technically be 1)
-         mean_dice = final_dice_per_class[0].item() # Only one class value
+    if num_classes > 1 and len(final_dice_per_class) > 1: # Check length defensively
+        # Average over classes 1 to C-1
+        mean_dice = torch.mean(final_dice_per_class[1:]).item()
+        mean_iou = torch.mean(final_iou_per_class[1:]).item()
+    elif len(final_dice_per_class) > 0: # Handle binary case or if only background predicted?
+         mean_dice = final_dice_per_class[0].item() # Metric for the only class (or background)
          mean_iou = final_iou_per_class[0].item()
+    else: # Should not happen if dataloader has items
+        mean_dice = 0.0
+        mean_iou = 0.0
 
     print(f"Validation Dice: {mean_dice:.4f} | Validation IoU: {mean_iou:.4f}")
 
