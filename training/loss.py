@@ -29,33 +29,52 @@ class SegmentationLoss(nn.Module):
              raise ValueError(f"Unsupported loss type for multiclass: {loss_type}")
 
     def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
-        """
-        Calculates loss, ignoring borders based on valid_mask.
+        # Expected Input Shapes:
+        # y_pred: (N, C, H, W) - Float Logits
+        # y_true: (N, H, W) - Long Indices
+        # valid_mask: (N, H, W) - Float Mask (0 or 1)
 
-        Args:
-            y_pred (torch.Tensor): Model predictions (logits), shape (N, C, H, W). C=1 for binary.
-            y_true (torch.Tensor): Ground truth masks, shape (N, C, H, W) float for binary BCE/Dice.
-            valid_mask (torch.Tensor): Mask indicating valid pixels (1=valid, 0=ignore), shape (N, H, W) or (N, 1, H, W).
-
-        Returns:
-            torch.Tensor: Scalar loss value.
-        """
-        # --- Ensure valid_mask has same spatial dims and potentially channel dim ---
-        if valid_mask.ndim == 3: # N, H, W -> add channel dim if needed
-            valid_mask = valid_mask.unsqueeze(1) # N, 1, H, W
-        if valid_mask.shape[1] != y_pred.shape[1]: # Check channel dim match (esp. C=1)
-             valid_mask = valid_mask.expand_as(y_pred) # Expand C dim if necessary
+        # --- Ensure valid_mask has same spatial dims (N, H, W) ---
+        if valid_mask.ndim == 4: # If accidentally (N, 1, H, W)
+            valid_mask = valid_mask.squeeze(1)
+        if valid_mask.shape != y_true.shape: # Should be (N, H, W) == (N, H, W)
+            raise ValueError(f"Shape mismatch: valid_mask {valid_mask.shape}, y_true {y_true.shape}")
 
         # --- Calculate raw loss per pixel ---
-        loss_map = self.criterion(y_pred, y_true) # Shape (N, C, H, W) usually
+        if self.loss_type == 'ce_dice':
+            # self.criterion returns a TUPLE: (ce_loss_map, dice_loss_scalar)
+            ce_loss_map, dice_loss_scalar = self.criterion(y_pred, y_true)
+            # ce_loss_map shape: (N, H, W) - Float per-pixel CE loss
+            # dice_loss_scalar shape: torch.Size([]) - Scalar Float Dice loss
 
-        # --- Apply valid mask and calculate mean ---
-        # Multiply loss element-wise by the valid mask
-        masked_loss = loss_map * valid_mask
+            # Apply valid mask to CE map
+            # *** Check shapes here ***
+            # masked_loss = loss_map * valid_mask # Original problematic line?
+            print(f"DEBUG Loss Shapes: ce_loss_map={ce_loss_map.shape}, valid_mask={valid_mask.shape}")
+            masked_ce_loss = ce_loss_map * valid_mask # Use the correct variable! Shape (N, H, W) * (N, H, W) -> OK
 
-        # Calculate mean loss only over valid pixels
-        # Sum the masked loss and divide by the number of valid pixels
-        num_valid_pixels = torch.sum(valid_mask) + 1e-8 # Add epsilon for stability
-        mean_loss = torch.sum(masked_loss) / num_valid_pixels
+            num_valid_pixels = torch.sum(valid_mask) + 1e-8
+            mean_ce_loss = torch.sum(masked_ce_loss) / num_valid_pixels
+
+            # Combine the averaged CE loss and the scalar Dice loss
+            mean_loss = 0.5 * mean_ce_loss + 0.5 * dice_loss_scalar
+
+        # --- Handling for other single-component losses ---
+        elif self.loss_type in ['ce', 'focal']: # Losses returning a map (N, H, W)
+            loss_map = self.criterion(y_pred, y_true) # Should be (N, H, W)
+            if loss_map.shape != y_true.shape: # Add shape check
+                 raise RuntimeError(f"Loss map shape {loss_map.shape} != target shape {y_true.shape} for loss {self.loss_type}")
+            masked_loss = loss_map * valid_mask # Element-wise multiplication
+            num_valid_pixels = torch.sum(valid_mask) + 1e-8
+            mean_loss = torch.sum(masked_loss) / num_valid_pixels
+
+        elif self.loss_type in ['dice', 'iou', 'jaccard']: # Losses returning a scalar
+            loss_scalar = self.criterion(y_pred, y_true) # Should be scalar (shape [])
+            if loss_scalar.ndim != 0: # Add shape check
+                 raise RuntimeError(f"Expected scalar loss for {self.loss_type}, got shape {loss_scalar.shape}")
+            # No masking needed for scalar loss (implicitly calculated over whole batch/image by SMP)
+            mean_loss = loss_scalar
+        else:
+            raise ValueError(f"Loss calculation not defined for type: {self.loss_type}")
 
         return mean_loss

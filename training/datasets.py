@@ -134,6 +134,4 @@ class SEMSegmentationDataset(Dataset):
             print(f"ERROR: Final mask shape is {mask.shape}, expected ({image.shape[1]}, {image.shape[2]})")
             # Handle error: maybe return None or raise? Or try to fix?
 
-        print(f"DEBUG Dataset: Returning Image Shape: {image.shape}, Mask Shape: {mask.shape}, Mask Dtype: {mask.dtype}")
-
         return {"image": image, "mask": mask, "valid_mask": valid_mask} # Return processed tensors
