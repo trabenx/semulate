@@ -1,6 +1,6 @@
 import torch
 import torch.optim as optim
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, random_split, Subset
 from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR, ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
 from datasets import SEMSegmentationDataset
@@ -85,22 +85,17 @@ def main(config_path='training/config_train.yaml'):
     print(f"Total samples: {num_all_samples}. Splitting indices: Train={len(train_indices)}, Val={len(val_indices)}, Test={len(test_indices)}")
 
     # 4. Create Datasets with specific indices and transforms
-    train_dataset = SEMSegmentationDataset(
+    dataset = SEMSegmentationDataset(
         data_dir=cfg_data['synthetic_data_dir'],
         max_layers=cfg_model['max_layers'], # Pass max_layers
-        mask_type=cfg_data['mask_type'],
-        indices=train_indices, # Pass indices
-        transform=train_tfms,
         ignore_border_pixels=cfg_data['ignore_border_pixels']
     )
-    val_dataset = SEMSegmentationDataset(
-        data_dir=cfg_data['synthetic_data_dir'],
-        max_layers=cfg_model['max_layers'], # Pass max_layers
-        mask_type=cfg_data['mask_type'],
-        indices=val_indices, # Pass indices
-        transform=val_tfms,
-        ignore_border_pixels=cfg_data['ignore_border_pixels']
-    )
+    
+    train_dataset = Subset(dataset, train_indices) # Use Subset or handle indices/transforms differently
+    val_dataset = Subset(dataset, val_indices)
+
+    train_dataset.dataset.transform = train_tfms
+    val_dataset.dataset.transform = val_tfms
     # test_dataset = SEMSegmentationDataset(...) # Create if needed
 
     # --- End Index-based Split ---
