@@ -50,7 +50,6 @@ class SegmentationLoss(nn.Module):
             # Apply valid mask to CE map
             # *** Check shapes here ***
             # masked_loss = loss_map * valid_mask # Original problematic line?
-            print(f"DEBUG Loss Shapes: ce_loss_map={ce_loss_map.shape}, valid_mask={valid_mask.shape}")
             masked_ce_loss = ce_loss_map * valid_mask # Use the correct variable! Shape (N, H, W) * (N, H, W) -> OK
 
             num_valid_pixels = torch.sum(valid_mask) + 1e-8
