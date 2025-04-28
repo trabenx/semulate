@@ -118,5 +118,12 @@ class SEMSegmentationDataset(Dataset):
              if mask.ndim == 2: mask = mask.unsqueeze(0) # Ensure channel dim -> (1, H, W) for BCE/Dice
         elif self.mask_type == "instance_mask":
              mask = mask.long() # Keep (H, W) LongTensor
+             
+        if not isinstance(mask, torch.LongTensor): mask = mask.long() # Ensure Long
+        if mask.ndim != 2 or mask.shape[0] != image.shape[1] or mask.shape[1] != image.shape[2]: # Check shape is (H, W)
+            print(f"ERROR: Final mask shape is {mask.shape}, expected ({image.shape[1]}, {image.shape[2]})")
+            # Handle error: maybe return None or raise? Or try to fix?
+
+        print(f"DEBUG Dataset: Returning Image Shape: {image.shape}, Mask Shape: {mask.shape}, Mask Dtype: {mask.dtype}")
 
         return {"image": image, "mask": mask, "valid_mask": valid_mask} # Return processed tensors

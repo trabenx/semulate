@@ -120,7 +120,10 @@ def main(config_path='training/config_train.yaml'):
 
     # --- Loss, Optimizer, Scheduler ---
     print("Setting up loss, optimizer, scheduler...")
-    criterion = SegmentationLoss(loss_type=cfg_train['loss'], ignore_border_pixels=cfg_data['ignore_border_pixels'])
+    criterion = SegmentationLoss(
+        loss_type=cfg_train['loss'],
+        num_classes=cfg_model['classes'],
+        ignore_border_pixels=cfg_data['ignore_border_pixels'])
 
     if cfg_train['optimizer'].lower() == 'adam':
         optimizer = optim.Adam(model.parameters(), lr=cfg_train['learning_rate'], weight_decay=cfg_train['weight_decay'])

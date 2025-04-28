@@ -14,10 +14,14 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, scaler=None
         masks = batch['mask'].to(device)
         valid_masks = batch['valid_mask'].to(device)
 
+        print(f"DEBUG Engine: Input Shapes - Img: {images.shape}, Mask: {masks.shape}, Valid: {valid_masks.shape}")
+        print(f"DEBUG Engine: Input Dtypes - Img: {images.dtype}, Mask: {masks.dtype}, Valid: {valid_masks.dtype}"
+
         optimizer.zero_grad()
 
         with torch.cuda.amp.autocast(enabled=scaler is not None):
             outputs = model(images)
+            print(f"DEBUG Engine: Output Shape: {outputs.shape}, Output Dtype: {outputs.dtype}")
             loss = criterion(outputs, masks, valid_masks)
 
         if scaler:
