@@ -156,10 +156,12 @@ def main(config_path='training/config_train.yaml'):
         # Validation
         if epoch % cfg_log['val_freq'] == 0:
             # Pass val_loader to evaluate
-            val_loss, val_dice = evaluate(model, val_loader, criterion, device) # Capture metrics
-            print(f"Epoch {epoch} Val Loss: {val_loss:.4f} | Val Dice: {val_dice:.4f}") # Print metrics
+            val_loss, val_metric = evaluate(model, val_loader, criterion, device, cfg_model['classes']) # Pass num_classes
+            
+            # Use a consistent name like val_metric (e.g., mean IoU or Dice)
+            print(f"Epoch {epoch} Val Loss: {val_loss:.4f} | Val Metric (Mean IoU/Dice): {val_metric:.4f}")
             writer.add_scalar('Loss/val', val_loss, epoch)
-            writer.add_scalar('Dice/val', val_dice, epoch) # Log metrics
+            writer.add_scalar('Metric/val', val_metric, epoch) # Log the primary metric
 
             # LR Scheduler Step (for ReduceLROnPlateau)
             if isinstance(scheduler, ReduceLROnPlateau):
