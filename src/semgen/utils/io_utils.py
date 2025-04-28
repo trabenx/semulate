@@ -4,7 +4,7 @@ import numpy as np
 import imageio
 import cv2 # Using OpenCV for image saving initially
 # Consider adding 'import tifffile' for better TIF handling if needed later
-from typing import Dict, Any, Union, List
+from typing import Dict, Any, Union, List, Optional
 
 def save_gif(frames: List[np.ndarray], filepath: str, fps: int = 5, loop: int = 0):
     """
@@ -136,3 +136,21 @@ def save_text(text_content: str, filepath: str):
             f.write(text_content)
     except Exception as e:
         print(f"Error saving text file {filepath}: {e}")
+        
+def save_npy(data_array: Optional[np.ndarray], filepath: str):
+    """Saves a NumPy array to a .npy file."""
+    if data_array is None:
+        # Optionally log a warning or just return silently
+        # print(f"Warning: Attempted to save None array to {filepath}")
+        return
+    ensure_dir_exists(os.path.dirname(filepath))
+    try:
+        np.save(filepath, data_array)
+    except Exception as e:
+        # Use logger if available, otherwise print
+        try:
+             import logging
+             logger = logging.getLogger()
+             logger.error(f"Error saving NPY file {filepath}: {e}", exc_info=True)
+        except:
+             print(f"Error saving NPY file {filepath}: {e}")

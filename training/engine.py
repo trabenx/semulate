@@ -15,7 +15,7 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, scaler=None
         valid_masks = batch['valid_mask'].to(device)
 
         print(f"DEBUG Engine: Input Shapes - Img: {images.shape}, Mask: {masks.shape}, Valid: {valid_masks.shape}")
-        print(f"DEBUG Engine: Input Dtypes - Img: {images.dtype}, Mask: {masks.dtype}, Valid: {valid_masks.dtype}"
+        print(f"DEBUG Engine: Input Dtypes - Img: {images.dtype}, Mask: {masks.dtype}, Valid: {valid_masks.dtype}")
 
         optimizer.zero_grad()
 

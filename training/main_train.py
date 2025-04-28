@@ -87,6 +87,7 @@ def main(config_path='training/config_train.yaml'):
     # 4. Create Datasets with specific indices and transforms
     train_dataset = SEMSegmentationDataset(
         data_dir=cfg_data['synthetic_data_dir'],
+        max_layers=cfg_model['max_layers'], # Pass max_layers
         mask_type=cfg_data['mask_type'],
         indices=train_indices, # Pass indices
         transform=train_tfms,
@@ -94,6 +95,7 @@ def main(config_path='training/config_train.yaml'):
     )
     val_dataset = SEMSegmentationDataset(
         data_dir=cfg_data['synthetic_data_dir'],
+        max_layers=cfg_model['max_layers'], # Pass max_layers
         mask_type=cfg_data['mask_type'],
         indices=val_indices, # Pass indices
         transform=val_tfms,

@@ -10,8 +10,9 @@ import random # For shuffling indices
 from typing import List
 
 class SEMSegmentationDataset(Dataset):
-    def __init__(self, data_dir: str, mask_type: str = "instance_mask",
-                 indices: List[int] = None, # Accept list of indices for this split
+    def __init__(self, data_dir: str,
+                 max_layers: int, # Add max_layers argument
+                 indices: List[int] = None,
                  transform: A.Compose = None,
                  ignore_border_pixels: int = 0):
         """
@@ -23,6 +24,7 @@ class SEMSegmentationDataset(Dataset):
             ignore_border_pixels (int): Pixels to ignore at border.
         """
         super().__init__()
+        self.max_layers = max_layers # Store max_layers
         self.data_dir = data_dir
         self.mask_type = mask_type
         self.transform = transform

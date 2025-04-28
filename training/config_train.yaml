@@ -4,10 +4,10 @@ seed: 42
 # --- Data ---
 data:
   # Path to the DIRECTORY containing the sample subdirectories (e.g., ./output_rich_random/)
-  synthetic_data_dir: "../output_even_richer_random" # Adjust path relative to main_train.py
+  synthetic_data_dir: "output_rich_random" # Adjust path relative to main_train.py
   # Optional: Path to a directory with real SEM data (if available) following similar structure
   # real_data_dir: "../real_sem_data"
-  mask_type: "instance_mask"      # Which mask to use as target ('instance_mask', 'combined_actual_mask')
+  mask_type: "layers"      # Which mask to use as target ('instance_mask', 'combined_actual_mask')
   train_split: 0.8                # Fraction for training set
   val_split: 0.1                  # Fraction for validation set (rest is test)
   num_workers: 4                  # Dataloader workers
@@ -25,14 +25,15 @@ model:
   # - num_semantic_classes + 1 (if different layers = different classes)
   # Let's assume binary segmentation (foreground/background) for combined_actual_mask initially
   # Or modify dataset to output instance targets for instance segmentation models
-  classes: 1                      # Output channels (1 for binary: foreground vs background)
+  max_layers: 10
+  classes: 11                      # Output channels (1 for binary: foreground vs background)
 
 # --- Training ---
 training:
   device: "cuda"                  # "cuda" or "cpu"
   epochs: 50
   batch_size: 8
-  loss: "dice_bce"                # Loss function ('dice', 'bce', 'dice_bce', 'iou', 'focal')
+  loss: "ce_dice"                # Loss function ('dice', 'bce', 'dice_bce', 'iou', 'focal')
   optimizer: "adamw"              # Optimizer ('adam', 'adamw', 'sgd')
   learning_rate: 0.0003
   weight_decay: 0.0001

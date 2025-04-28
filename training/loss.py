@@ -4,27 +4,29 @@ import torch.nn.functional as F
 import segmentation_models_pytorch.losses as smp_losses
 
 class SegmentationLoss(nn.Module):
-    def __init__(self, loss_type: str = 'dice_bce', ignore_border_pixels: int = 0):
+    def __init__(self, loss_type: str = 'ce', num_classes: int = 2, ignore_border_pixels: int = 0):
+
         super().__init__()
+        self.num_classes = num_classes # Ensure this is passed correctly from config
         self.ignore_border_pixels = ignore_border_pixels
         self.loss_type = loss_type.lower()
 
         # Use activation within loss for binary case (sigmoid)
-        if self.loss_type == 'dice':
-            self.criterion = smp_losses.DiceLoss(mode='binary', from_logits=True)
-        elif self.loss_type == 'bce':
-             # BCEWithLogitsLoss includes sigmoid
-            self.criterion = nn.BCEWithLogitsLoss(reduction='none') # No reduction yet
-        elif self.loss_type == 'dice_bce':
-             self.dice = smp_losses.DiceLoss(mode='binary', from_logits=True, smooth=1e-6)
-             self.bce = nn.BCEWithLogitsLoss(reduction='none')
-             self.criterion = lambda p, t: 0.5 * self.dice(p, t) + 0.5 * self.bce(p, t)
+        if self.loss_type == 'ce':
+            self.criterion = nn.CrossEntropyLoss(reduction='none')
+        elif self.loss_type == 'dice':
+             self.criterion = smp_losses.DiceLoss(mode='multiclass', from_logits=True, smooth=1e-6) # Set mode='multiclass'
+        elif self.loss_type == 'ce_dice':
+             self.ce = nn.CrossEntropyLoss(reduction='none')
+             self.dice = smp_losses.DiceLoss(mode='multiclass', from_logits=True, smooth=1e-6) # Set mode='multiclass'
+             # Define how to combine them in forward
+             self.criterion = lambda p, t: (self.ce(p,t), self.dice(p,t)) # Return both components
         elif self.loss_type == 'iou' or self.loss_type == 'jaccard':
-             self.criterion = smp_losses.JaccardLoss(mode='binary', from_logits=True)
+             self.criterion = smp_losses.JaccardLoss(mode='multiclass', from_logits=True) # Set mode='multiclass'
         elif self.loss_type == 'focal':
-             self.criterion = smp_losses.FocalLoss(mode='binary', gamma=2.0) # Gamma default 2.0
+             self.criterion = smp_losses.FocalLoss(mode='multiclass', gamma=2.0) # Set mode='multiclass'
         else:
-             raise ValueError(f"Unsupported loss type: {loss_type}")
+             raise ValueError(f"Unsupported loss type for multiclass: {loss_type}")
 
     def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
         """
