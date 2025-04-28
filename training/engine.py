@@ -49,12 +49,17 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, scaler=None
     return epoch_loss / len(dataloader)
 
 @torch.no_grad()
-def evaluate(model, dataloader, criterion, device):
+def evaluate(model, dataloader, criterion, device, num_classes):
     model.eval()
     total_loss = 0.0
-    # Use SMP metrics - expects logits/probabilities and integer target masks
-    # For binary case (sigmoid output):
-    dice_metric = smp_metrics.f1_score(threshold=0.5).to(device) # F1 is Dice for binary
+    
+    # --- Initialize metrics for MULTICLASS ---
+    # Remove threshold argument, it's handled internally via argmax for multiclass
+    dice_metric = smp_metrics.f1_score(num_classes=num_classes if num_classes > 1 else None, # Specify num_classes if > 1 for clarity? SMP might infer. Let's rely on inference for now.
+                                       ignore_index=None).to(device) # Can ignore background index if needed
+    iou_metric = smp_metrics.iou_score(num_classes=num_classes if num_classes > 1 else None,
+                                       ignore_index=None).to(device)
+    # --- End Metric Initialization Change ---
 
     pbar = tqdm(dataloader, desc="Validation", leave=False)
 
@@ -69,18 +74,27 @@ def evaluate(model, dataloader, criterion, device):
 
         total_loss += loss.item()
 
-        # --- Calculate Metrics ---
-        # Need probabilities (apply sigmoid) and integer target mask
-        preds_prob = torch.sigmoid(outputs)
-        # Target mask needs to be integer type (0 or 1) and match spatial dims
-        masks_int = (masks > 0.5).long() # Convert float [0,1] mask to long [0,1]
-        # Apply valid mask to predictions and targets before metric calculation? Optional.
-        # Example: preds_prob = preds_prob * valid_mask; masks_int = masks_int * valid_mask.long()
-        dice_metric.update(preds_prob, masks_int)
+        # --- Update Metrics ---
+        # SMP metrics generally expect logits for multiclass when threshold=None
+        # Pass raw logits (N, C, H, W) and integer target masks (N, H, W)
+        # The metric applies argmax internally
+        # Note: If using ignore_index, ensure background class ID is correct
+        dice_metric.update(outputs, masks)
+        iou_metric.update(outputs, masks)
 
     avg_loss = total_loss / len(dataloader)
-    final_dice = dice_metric.compute().item() # Compute final metric and get scalar value
+    # Compute final metrics
+    final_dice_per_class = dice_metric.compute() # Returns tensor (C,)
+    final_iou_per_class = iou_metric.compute()   # Returns tensor (C,)
 
-    print(f"Validation Dice: {final_dice:.4f}")
+    # Calculate mean metrics (e.g., excluding background class 0)
+    if num_classes > 1:
+        mean_dice = torch.mean(final_dice_per_class[1:]).item() # Avg Dice over foreground classes
+        mean_iou = torch.mean(final_iou_per_class[1:]).item()   # Avg IoU over foreground classes
+    else: # Binary case (num_classes should technically be 1)
+         mean_dice = final_dice_per_class[0].item() # Only one class value
+         mean_iou = final_iou_per_class[0].item()
 
-    return avg_loss, final_dice # Return both loss and metric
+    print(f"Validation Dice: {mean_dice:.4f} | Validation IoU: {mean_iou:.4f}")
+
+    return avg_loss, mean_dice # Return loss and primary metric (e.g., Dice)
