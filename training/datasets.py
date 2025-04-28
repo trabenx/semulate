@@ -26,7 +26,6 @@ class SEMSegmentationDataset(Dataset):
         super().__init__()
         self.max_layers = max_layers # Store max_layers
         self.data_dir = data_dir
-        self.mask_type = mask_type
         self.transform = transform
         self.ignore_border_pixels = ignore_border_pixels
 
@@ -68,58 +67,67 @@ class SEMSegmentationDataset(Dataset):
         image = image.astype(np.float32) / 255.0
         image = np.expand_dims(image, axis=-1) # HWC for Albumentations
 
-        # Load mask
-        mask = None
-        # Construct mask path based on mask_type
-        if self.mask_type == "instance_mask":
-            # Load uint16 TIF recommended
-            mask_path = os.path.join(subdir_path, "instance_mask.tif")
-            if os.path.exists(mask_path):
-                 mask = cv2.imread(mask_path, cv2.IMREAD_UNCHANGED) # Load as is (uint16)
-                 if mask is not None and mask.ndim == 3: mask = mask[..., 0] # Handle potential extra channel read by cv2
-            else: print(f"Warning: Instance mask not found: {mask_path}")
+        # --- Load and Create Multi-Class Layer Mask ---
+        height, width = image.shape[:2]
+        # Initialize target mask with background class (0)
+        layer_target_mask = np.zeros((height, width), dtype=np.int64) # Use int64 for LongTensor
 
-        elif self.mask_type == "combined_actual_mask":
-             # Load NPY data mask (binary 0/1)
-             mask_path = os.path.join(subdir_path, "combined_actual_mask.npy")
+        # Find layer mask files for this sample
+        subdir_name = os.path.splitext(os.path.basename(self.image_files[idx]))[0]
+        subdir_path = os.path.join(self.data_dir, subdir_name)
+        masks_data_dir = os.path.join(subdir_path, "layers") # Dir containing layer_xx dirs
+
+        # Load individual actual layer masks (npy recommended)
+        # Layer order matters for overlaps: later layers overwrite earlier ones
+        num_layers_found = 0
+        for layer_idx in range(self.max_layers): # Iterate up to max possible layers
+             layer_dir = os.path.join(masks_data_dir, f"layer_{layer_idx:02d}")
+             mask_path = os.path.join(layer_dir, "actual_mask.npy") # Load data mask
              if os.path.exists(mask_path):
-                  mask = np.load(mask_path) # Loads as uint8 (0/1)
-             else: print(f"Warning: Combined actual mask (.npy) not found: {mask_path}")
-             # Fallback to loading visual PNG if NPY missing?
-             if mask is None:
-                   mask_vis_path = os.path.join(subdir_path, "combined_actual_mask_vis.png")
-                   if os.path.exists(mask_vis_path):
-                       mask_vis = cv2.imread(mask_vis_path, cv2.IMREAD_GRAYSCALE)
-                       if mask_vis is not None: mask = (mask_vis > 128).astype(np.uint8) # Convert 0/255 back to 0/1
+                 try:
+                     layer_mask = np.load(mask_path) # uint8 0/1 mask
+                     if layer_mask.shape == (height, width):
+                          # Assign layer class ID (layer 0 -> class 1, layer 1 -> class 2, ...)
+                          layer_class_id = layer_idx + 1
+                          layer_target_mask[layer_mask > 0] = layer_class_id
+                          num_layers_found += 1
+                     else:
+                          print(f"Warning: Mask shape mismatch for {mask_path}. Skipping.")
+                 except Exception as e:
+                     print(f"Warning: Failed to load layer mask {mask_path}: {e}")
+             else:
+                  # Stop looking if a layer is missing sequentially? Or allow gaps?
+                  # Assuming sequential for now, break if layer dir/mask missing.
+                  # If layers can be sparse (e.g., layer 0, layer 2 exist but not 1),
+                  # this needs adjustment based on how layers are stored/named.
+                  # print(f"DEBUG: Layer {layer_idx} mask not found, stopping layer load.")
+                  # break # If layers must be sequential
+                  pass # Allow sparse layers if naming permits
 
-        if mask is None: mask = np.zeros(image.shape[:2], dtype=np.uint8)
 
-        # Create valid mask
-        valid_mask = np.ones(mask.shape[:2], dtype=np.float32) # Use H, W from mask
+        if num_layers_found == 0:
+             print(f"Warning: No layer masks found for sample {subdir_name}. Target mask is all background.")
+
+        # --- Create Valid Mask (as before) ---
+        valid_mask = np.ones(layer_target_mask.shape, dtype=np.float32)
         b = self.ignore_border_pixels
-        if b > 0 and mask.ndim == 2: # Ensure mask is 2D for slicing
+        if b > 0:
             valid_mask[:b, :] = 0.0; valid_mask[-b:, :] = 0.0
             valid_mask[:, :b] = 0.0; valid_mask[:, -b:] = 0.0
 
-        # Apply transforms
-        sample = {'image': image, 'mask': mask, 'valid_mask': valid_mask}
+        # --- Apply Albumentations Transforms ---
+        sample = {'image': image, 'mask': layer_target_mask, 'valid_mask': valid_mask}
         if self.transform:
-            # Important: Ensure mask interpolation is NEAREST if doing geometric transforms!
-            # Albumentations usually handles this if mask is passed to 'mask' arg.
+            # IMPORTANT: Use nearest neighbor interpolation for the multi-class mask!
+            # Ensure your Albumentations Resize/ShiftScaleRotate use interpolation=cv2.INTER_NEAREST for masks.
+            # Albumentations usually does this correctly if mask is passed to 'mask'.
             augmented = self.transform(**sample)
             sample = augmented
 
-        # Convert to tensor (handled by ToTensorV2 in transforms)
-        image = sample['image']
-        mask = sample['mask']
-        valid_mask = sample['valid_mask']
-
-        # Final mask shape/type adjustment
-        if self.mask_type == "combined_actual_mask":
-             mask = mask.float() # Keep (1, H, W) or (H, W) depending on ToTensorV2 output and loss
-             if mask.ndim == 2: mask = mask.unsqueeze(0) # Ensure channel dim -> (1, H, W) for BCE/Dice
-        elif self.mask_type == "instance_mask":
-             mask = mask.long() # Keep (H, W) LongTensor
+        # --- Convert to Tensor ---
+        image = sample['image'] # Should be (C, H, W) float from ToTensorV2
+        mask = sample['mask']   # Should be (H, W) int64 from ToTensorV2 (no channel dim for target)
+        valid_mask = sample['valid_mask'] # Should be (H, W) float from ToTensorV2
              
         if not isinstance(mask, torch.LongTensor): mask = mask.long() # Ensure Long
         if mask.ndim != 2 or mask.shape[0] != image.shape[1] or mask.shape[1] != image.shape[2]: # Check shape is (H, W)
