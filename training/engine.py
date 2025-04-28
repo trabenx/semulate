@@ -1,7 +1,7 @@
 import torch
 from tqdm import tqdm
 import gc # Garbage collection
-import segmentation_models_pytorch.metrics as smp_metrics # Import metrics
+import segmentation_models_pytorch.losses as smp_losses
 
 
 def train_one_epoch(model, dataloader, criterion, optimizer, device, scaler=None, max_grad_norm=1.0):
@@ -49,13 +49,19 @@ def evaluate(model, dataloader, criterion, device, num_classes):
     model.eval()
     total_loss = 0.0
     
-    # --- Initialize metrics for MULTICLASS ---
-    # Remove threshold argument, it's handled internally via argmax for multiclass
-    dice_metric = smp_metrics.f1_score().to(device)
-    iou_metric = smp_metrics.iou_score().to(device)
-    # --- End Metric Initialization Change ---
+    # --- Use Loss instances to calculate batch metrics ---
+    # Initialize Dice and IoU Loss objects configured for multiclass evaluation
+    # We want the metric value (1 - loss for Dice/IoU usually, but SMP might return score directly)
+    # Use high epsilon to avoid division by zero issues in eval if a class isn't present
+    dice_metric_calculator = smp_losses.DiceLoss(mode='multiclass', from_logits=True, smooth=1e-5)
+    iou_metric_calculator = smp_losses.JaccardLoss(mode='multiclass', from_logits=True, smooth=1e-5) # Jaccard is IoU
+
+    # Accumulators for metrics over the epoch
+    epoch_dice_scores = []
+    epoch_iou_scores = []
 
     pbar = tqdm(dataloader, desc="Validation", leave=False)
+
 
     for batch in pbar:
         images = batch['image'].to(device)
@@ -68,32 +74,36 @@ def evaluate(model, dataloader, criterion, device, num_classes):
 
         total_loss += loss.item()
 
-        # --- Update Metrics ---
-        # SMP metrics generally expect logits for multiclass when threshold=None
-        # Pass raw logits (N, C, H, W) and integer target masks (N, H, W)
-        # The metric applies argmax internally
-        # Note: If using ignore_index, ensure background class ID is correct
-        dice_metric.update(outputs, masks)
-        iou_metric.update(outputs, masks)
+        # --- Calculate Batch Metrics using Loss functions ---
+        # NOTE: These loss functions calculate the loss *per image* in the batch then average.
+        # They might not directly give per-class scores easily without modification or using different tools.
+        # Let's calculate the batch-averaged Dice and IoU scores (which are 1 - Loss).
+
+        # Calculate Dice score = 1 - DiceLoss
+        # Need to apply valid_mask *before* calculating metric if possible,
+        # but SMP losses might not support mask input directly.
+        # Alternative: Calculate metric on full image, accept it's less precise due to borders.
+        batch_dice_loss = dice_metric_calculator(outputs, masks)
+        batch_dice_score = 1.0 - batch_dice_loss.item() # Get scalar score for the batch
+        epoch_dice_scores.append(batch_dice_score)
+
+        # Calculate IoU score = 1 - JaccardLoss
+        batch_iou_loss = iou_metric_calculator(outputs, masks)
+        batch_iou_score = 1.0 - batch_iou_loss.item() # Get scalar score for the batch
+        epoch_iou_scores.append(batch_iou_score)
+
+        pbar.set_postfix(loss=f"{loss.item():.4f}", dice=f"{batch_dice_score:.4f}", iou=f"{batch_iou_score:.4f}")
+
 
     avg_loss = total_loss / len(dataloader)
-    # Compute final metrics - returns tensor (C,) including background
-    final_dice_per_class = dice_metric.compute()
-    final_iou_per_class = iou_metric.compute()
+    # --- Calculate Epoch Mean Metrics ---
+    final_mean_dice = np.mean(epoch_dice_scores) if epoch_dice_scores else 0.0
+    final_mean_iou = np.mean(epoch_iou_scores) if epoch_iou_scores else 0.0
 
-    # Calculate mean metrics EXCLUDING background class 0 manually
-    if num_classes > 1 and len(final_dice_per_class) > 1:
-        # Slice AFTER compute to exclude background (index 0)
-        mean_dice = torch.mean(final_dice_per_class[1:]).item()
-        mean_iou = torch.mean(final_iou_per_class[1:]).item()
-    elif len(final_dice_per_class) > 0: # Handle binary case or if only background predicted?
-         mean_dice = final_dice_per_class[0].item() # Metric for the only class (or background)
-         mean_iou = final_iou_per_class[0].item()
-    else:
-        mean_dice = 0.0
-        mean_iou = 0.0
 
-    print(f"Validation Dice (FG Mean): {mean_dice:.4f} | Validation IoU (FG Mean): {mean_iou:.4f}")
-    # Optionally print per-class scores too for debugging
-    print(f"  Per-Class Dice: {final_dice_per_class.cpu().numpy().round(4)}")
-    print(f"  Per-Class IoU:  {final_iou_per_class.cpu().numpy().round(4)}")
+    print(f"Validation Mean Dice: {final_mean_dice:.4f} | Validation Mean IoU: {final_mean_iou:.4f}")
+    # Note: These are average scores across batches, potentially including background influence
+    # depending on how the SMP losses calculate the multiclass average.
+
+
+    return avg_loss, final_mean_dice # Return loss and primary metric (e.g., Dice)
