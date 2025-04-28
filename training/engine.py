@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 from tqdm import tqdm
 import gc # Garbage collection
 import segmentation_models_pytorch.losses as smp_losses
